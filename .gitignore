@@ -1,0 +1,11 @@
+# DATA FOLDERS
+data/
+data2/
+_tmp/
+
+# PYTHON FOLDERS/FILES
+.pyc
+__pycache__/
+
+# DEVELOPMENT ENVIRONMENT
+.vscode
