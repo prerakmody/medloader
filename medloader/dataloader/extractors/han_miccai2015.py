@@ -101,6 +101,11 @@ class HaNMICCAI2015Extractor:
         import concurrent
         import concurrent.futures
 
+        if len(config.VOXEL_RESO):
+            print ('')
+            print (' - [HaNMICCAI2015Dataset] config.VOXEL_RESO: ', config.VOXEL_RESO)
+            print ('')
+
         # Step 1 - Create tasks
         executor_tasks = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -121,8 +126,8 @@ class HaNMICCAI2015Extractor:
         paths_global_voxel_img = []
         paths_global_voxel_mask = []
 
-        if config.IPYTHON_FLAG:dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
-        else: dir_type_idx=0
+        if config.IPYTHON_FLAG:dir_type_idx=0
+        else: dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
         
         with tqdm_func(total=len(list(dir_dataset.glob('*'))), desc='[3D][{}] Patients: '.format(dir_type), disable=False, position=dir_type_idx) as pbar:
             for _, patient_dir_path in enumerate(dir_dataset.iterdir()):
@@ -295,8 +300,8 @@ class HaNMICCAI2015Extractor:
 
             dir_type = Path(dir_dataset).parts[-2]
 
-            if config.IPYTHON_FLAG:dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
-            else: dir_type_idx=0
+            if config.IPYTHON_FLAG:dir_type_idx=0
+            else: dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
             
             with tqdm_func(total=len(list(dir_dataset.glob(self.folder_prefix + '*'))), desc='[2D][{}] Patients: '.format(dir_type)
                             , disable=False, position=dir_type_idx) as pbar_patients_2D:

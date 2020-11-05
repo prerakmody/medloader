@@ -106,7 +106,7 @@ def benchmark_multiple(datasets_generator, dataset, batch_size=1): # avg=0.3sec
         print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s')
         t0 = time.time()
 
-def benchmark_with_profiler(dataset, dataset_generator):
+def benchmark_with_profiler(dataset_generator, model_time=0.1):
     """
      - Ref: https://www.tensorflow.org/guide/profiler#profiling_apis
     """

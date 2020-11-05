@@ -90,7 +90,7 @@ DATATYPE_TF_INT32 = tf.int32
 DATATYPE_TF_FLOAT32 = tf.float32
 
 # in mm
-VOXEL_RESO =  () # [(0.8,0.8,2.5), () , (1,1,1), (1,1,2)] 
+VOXEL_RESO =  (0.8,0.8,2.5) # [(0.8,0.8,2.5), () , (1,1,1), (1,1,2)] 
 
 TYPE_VOXEL_ORIGSHAPE = 'orig'
 TYPE_VOXEL_RESAMPLED = 'resampled'

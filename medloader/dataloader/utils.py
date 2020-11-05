@@ -874,20 +874,36 @@ def get_dataset_from_zip(meta2, dataset):
 #                    DEBUG RELATED                         #
 ############################################################
 
-def benchmark_model(X):
-    time.sleep(0.1)
+def benchmark_model(model_time):
+    time.sleep(model_time)
 
-def benchmark(dataset_generator):
+def benchmark(dataset_generator, model_time=0.1):
 
     print (' - [benchmark()]')
     t0 = time.time()
-    for X,Y,_,_ in dataset_generator:
+    for X,_,_,_ in dataset_generator:
         t1 = time.time()
-        benchmark_model(X)
+        benchmark_model(model_time)
         t2 = time.time()
         print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s', '(',X.shape,')')
         # print (X.shape)
         t0 = time.time()
+
+def benchmark_with_profiler(dataset_generator, model_time=0.1):
+    """
+     - Ref: https://www.tensorflow.org/guide/profiler#profiling_apis
+    """
+    import tensorflow as tf
+    if tf.__version__ in ['2.3.0']:
+        with tf.profiler.experimental.Profile('./logdir'): # makes the dir at the end of execution.
+            print (' - [utils.benchmark_with_profiler()]')
+            t0 = time.time()
+            for X,Y,meta1,meta2 in dataset_generator:
+                t1 = time.time()
+                benchmark_model(model_time)
+                t2 = time.time()
+                print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s', '(',X.shape,')')
+                t0 = time.time()
 
 def print_debug_header():
     print (' ============================================== ')
