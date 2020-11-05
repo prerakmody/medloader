@@ -8,9 +8,11 @@ import traceback
 import numpy as np
 from pathlib import Path
 
-
 import medloader.dataloader.config as config
 import medloader.dataloader.utils as utils
+
+if config.IPYTHON_FLAG:tqdm_func = tqdm.tqdm
+else:tqdm_func = tqdm.tqdm_notebook
 
 class HaNMICCAI2015Downloader:
 
@@ -20,6 +22,7 @@ class HaNMICCAI2015Downloader:
 
     def download(self):
         self.dataset_dir_raw.mkdir(parents=True, exist_ok=True)
+        
         # Step 1 - Download .zips and unzip them
         urls_zip = ['http://www.imagenglab.com/data/pddca/PDDCA-1.4.1_part1.zip'
                     , 'http://www.imagenglab.com/data/pddca/PDDCA-1.4.1_part2.zip'
@@ -28,14 +31,14 @@ class HaNMICCAI2015Downloader:
         import concurrent
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            for url_zip in urls_zip:
+            for url_id, url_zip in enumerate(urls_zip):
                 filepath_zip = Path(self.dataset_dir_raw, url_zip.split('/')[-1])
 
                 # Step 1.1 - Download .zip and then unzip it
                 if not Path(filepath_zip).exists():
-                    executor.submit(utils.download_zip, url_zip, filepath_zip, self.dataset_dir_raw)
+                    executor.submit(utils.download_zip, url_zip, filepath_zip, self.dataset_dir_raw, url_id)
                 else:
-                    executor.submit(utils.read_zip, filepath_zip, self.dataset_dir_raw)
+                    executor.submit(utils.read_zip, filepath_zip, self.dataset_dir_raw, url_id)
                 
                 # Step 1.2 - Unzip .zip
                 # executor.submit(utils.read_zip(filepath_zip, self.dataset_dir_raw)
@@ -88,6 +91,7 @@ class HaNMICCAI2015Extractor:
         self.LABEL_MAP = getattr(config, self.name)['LABEL_MAP']
         self.IGNORE_LABELS = getattr(config,self.name)['IGNORE_LABELS']
 
+        # Need the following vars since these headers keys are different in .nrrd and .mha formats
         self.KEYNAME_PIXEL_SPACING = 'space directions'
         self.KEYNAME_ORIGIN = 'space origin'
         self.KEYNAME_SHAPE = 'sizes'
@@ -96,25 +100,33 @@ class HaNMICCAI2015Extractor:
         
         import concurrent
         import concurrent.futures
+
+        # Step 1 - Create tasks
+        executor_tasks = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # for dir_type in ['train']:
-                # self._extract3D_patients(Path(self.dataset_dir_raw).joinpath(dir_type))
             for dir_type in self.dataset_dir_datatypes:
-                executor.submit(self._extract3D_patients, Path(self.dataset_dir_raw).joinpath(dir_type))
+                executor_tasks.append(executor.submit(self._extract3D_patients, Path(self.dataset_dir_raw).joinpath(dir_type)))
         
-        print ('')
-        print (' - Note: You can view the 3D data in visualizers like MeVisLab or 3DSlicer')
-        print ('')
+        # Step 2 - Monitor tasks
+        executor_tasks_done = 0
+        for executor_task_idx, executor_task in enumerate(concurrent.futures.as_completed(executor_tasks)):
+            executor_tasks_done += 1
+            if executor_tasks_done == len(executor_tasks):
+                print ('')
+                print (' - Note: You can view the 3D data in visualizers like MeVisLab or 3DSlicer')
+                print ('')
     
     def _extract3D_patients(self, dir_dataset):
         dir_type = Path(dir_dataset).parts[-1]
         paths_global_voxel_img = []
         paths_global_voxel_mask = []
 
-        dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
-        with tqdm.tqdm(total=len(list(dir_dataset.glob('*'))), desc='[3D][{}] Patients: '.format(dir_type), disable=False, position=dir_type_idx) as pbar:
+        if config.IPYTHON_FLAG:dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
+        else: dir_type_idx=0
+        
+        with tqdm_func(total=len(list(dir_dataset.glob('*'))), desc='[3D][{}] Patients: '.format(dir_type), disable=False, position=dir_type_idx) as pbar:
             for _, patient_dir_path in enumerate(dir_dataset.iterdir()):
-                voxel_img_filepath, voxel_mask_filepath = self._extract3D_patient(patient_dir_path)
+                voxel_img_filepath, voxel_mask_filepath, _ = self._extract3D_patient(patient_dir_path)
                 paths_global_voxel_img.append(voxel_img_filepath)
                 paths_global_voxel_mask.append(voxel_mask_filepath)
                 pbar.update(1)
@@ -205,7 +217,7 @@ class HaNMICCAI2015Extractor:
             voxel_mask_full = []
             voxel_mask_headers = {}
             if Path(path_mask_folder).exists():
-                with tqdm.tqdm(total=len(list(Path(path_mask_folder).glob('*{}'.format(self.DATATYPE_ORIG)))), leave=False, disable=True) as pbar_mask:
+                with tqdm_func(total=len(list(Path(path_mask_folder).glob('*{}'.format(self.DATATYPE_ORIG)))), leave=False, disable=True) as pbar_mask:
                     for filepath_mask in Path(path_mask_folder).iterdir():
                         voxel_mask, voxel_mask_headers = nrrd.read(str(filepath_mask))
                         class_name = Path(filepath_mask).parts[-1].split(self.DATATYPE_ORIG)[0]
@@ -282,10 +294,12 @@ class HaNMICCAI2015Extractor:
             voxel_shape_info = {}
 
             dir_type = Path(dir_dataset).parts[-2]
-            dir_type_index = self.dataset_dir_datatypes.index(dir_type)
 
-            with tqdm.tqdm(total=len(list(dir_dataset.glob(self.folder_prefix + '*'))), desc='[2D][{}] Patients: '.format(dir_type)
-                            , disable=False, position=dir_type_index) as pbar_patients_2D:
+            if config.IPYTHON_FLAG:dir_type_idx = self.dataset_dir_datatypes.index(dir_type)
+            else: dir_type_idx=0
+            
+            with tqdm_func(total=len(list(dir_dataset.glob(self.folder_prefix + '*'))), desc='[2D][{}] Patients: '.format(dir_type)
+                            , disable=False, position=dir_type_idx) as pbar_patients_2D:
                 for patient_counter, patient_dir_path in enumerate(dir_dataset.iterdir()):
                     if '.csv' in patient_dir_path.parts[-1] or '.json' in patient_dir_path.parts[-1] : continue
 

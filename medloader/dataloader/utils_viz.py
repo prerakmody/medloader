@@ -268,19 +268,18 @@ def viz_3d_mask(voxel_masks, dataset, meta1, meta2):
         for batch_id, voxel_mask in enumerate(voxel_masks):
             fig = go.Figure()
             label_ids = np.unique(voxel_mask)
-            print (' - label_ids: ', label_ids)
+            print (' - [utils_viz.viz_3d_mask()] label_ids: ', label_ids)
+            if len(label_ids) == 1:
+                if int(label_ids[0]) == 0:
+                    continue
 
-            import tensorflow as tf
-            # voxel_mask_ = tf.image.rot90(voxel_mask, k=3)
-            # voxel_mask_ = tf.transpose(tf.reverse(voxel_mask, [0]), [1,0,2])
             voxel_mask_ = voxel_mask
-            print (' -voxel_mask: ', voxel_mask.shape, ' || voxel_mask_:', voxel_mask_.shape)
-
+            
             # Step 2 - Loop over all label_ids
             for i_, label_id in enumerate(label_ids):
                 
                 if label_id == 0 : continue
-                name, color = get_info_from_label_id(label_id, dataset)
+                name, color = get_info_from_label_id(label_id, dataset[batch_id])
                 print (' - label_id: ', label_id, '(',name,')')
 
                 # Get surface information

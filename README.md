@@ -1,5 +1,5 @@
 # MED-LOADER
-This repository contains code for downloading, sorting, extracting (to .mha) and viewing CT slices from open datasets like
+This repository contains code for downloading, sorting, extracting (to [.mha i.e. a MetaImage](https://itk.org/Wiki/ITK/MetaIO/Documentation#Quick_Start)) and viewing CT slices from open datasets like:-
 1. [MICCAI 2015 Head and Neck (HaN) Segmentation Challenge](http://www.imagenglab.com/wiki/mediawiki/index.php?title=2015_MICCAI_Challenge)
 
 
@@ -7,7 +7,6 @@ This repository contains code for downloading, sorting, extracting (to .mha) and
 1. Install [Anaconda](https://docs.anaconda.com/anaconda/install/) with python3.7
 2. Install [git](https://git-scm.com/downloads)
 3. Open a terminal and follow the commands
-    - For Windows: `conda init powershell` (and the restart terminal)
     - Clone this repository
         - `git clone git@github.com:prerakmody/medloader.git`
     - Install
@@ -19,11 +18,11 @@ This repository contains code for downloading, sorting, extracting (to .mha) and
         - `conda develop .`
             - Adds medloader as a python pacakge on your local machine
 4. To download/sort/extract the MICCAI 2015 dataset
-    - Keep `config.VOXEL_RESO` as an empty tuple `=()` if you dont want to resmaple
-        - Time consuming step
+    - Keep `medloader.dataloader.config.VOXEL_RESO` as an empty tuple `=()` if you dont want to resmaple
+        - Time consuming step (_but it is recommended that all 3D volumes have the same pixel spacing_)
     - `python demo/tf_han_miccai2015.py`
         - This shall create a `./data/MICCAI2015_HaN` directory with `raw/` and `processed/` data files for each patient
-        - If `config.VOXEL_RESO` is kepy empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015.get_dataset_han_micca2015`
+        - If `medloader.dataloader.config.VOXEL_RESO` is kept empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015.get_dataset_han_micca2015`
 
 ## CleanUp
 1. Remove conda env

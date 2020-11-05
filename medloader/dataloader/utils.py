@@ -7,32 +7,36 @@ import urllib
 import traceback
 import numpy as np
 from pathlib import Path
-
 import SimpleITK as sitk # sitk.Version.ExtendedVersionString()
 
 import medloader.dataloader.config as config
+
+if config.IPYTHON_FLAG:tqdm_func = tqdm.tqdm
+else:tqdm_func = tqdm.tqdm_notebook
 
 ############################################################
 #                    DOWNLOAD RELATED                      #
 ############################################################
 
-class DownloadProgressBar(tqdm.tqdm):
+class DownloadProgressBar(tqdm_func):
     def update_to(self, b=1, bsize=1, tsize=None):
         if tsize is not None:
             self.total = tsize
         self.update(b * bsize - self.n)
 
-def download_zip(url_zip, filepath_zip, filepath_output):
+def download_zip(url_zip, filepath_zip, filepath_output, position_id=0):
     import urllib
-    with DownloadProgressBar(unit='B', unit_scale=True, miniters=1, desc='[Download]' + str(url_zip.split('/')[-1]) ) as pbar:
+    if config.IPYTHON_FLAG: position_id=0
+    with DownloadProgressBar(unit='B', unit_scale=True, miniters=1, desc='[Download]' + str(url_zip.split('/')[-1]), position=position_id, leave=True) as pbar:
         urllib.request.urlretrieve(url_zip, filename=filepath_zip, reporthook=pbar.update_to)
     read_zip(filepath_zip, filepath_output)
 
-def read_zip(filepath_zip, filepath_output, leave=False):
+def read_zip(filepath_zip, filepath_output, leave=True, position_id=0):
     import zipfile
     zip_fp = zipfile.ZipFile(filepath_zip, 'r')
     zip_fp_members = zip_fp.namelist()
-    with tqdm.tqdm(total=len(zip_fp_members), desc='[Unzip]' + str(filepath_zip.parts[-1]), leave=leave) as pbar_zip:
+    if config.IPYTHON_FLAG: position_id=0
+    with tqdm_func(total=len(zip_fp_members), desc='[Unzip]' + str(filepath_zip.parts[-1]), leave=leave, position=position_id) as pbar_zip:
         for member in zip_fp_members:
             zip_fp.extract(member, filepath_output)
             pbar_zip.update(1)
@@ -858,6 +862,13 @@ def get_name_patient_study_id(meta):
         traceback.print_exc()
         pdb.set_trace()
 
+def get_dataset_from_zip(meta2, dataset):
+    datasets_this = []
+    for batch_id in range(len(meta2)):
+        dataset_name = meta2[batch_id].numpy().decode('utf-8').split('-')[0]
+        datasets_this.append(dataset.get_subdataset(param_name=dataset_name))
+
+    return datasets_this
 
 ############################################################
 #                    DEBUG RELATED                         #
