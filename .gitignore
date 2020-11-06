@@ -1,6 +1,8 @@
 # DATA FOLDERS
 data/
 _tmp/
+models/
+logs/
 
 # PYTHON FOLDERS/FILES
 .pyc

@@ -62,7 +62,11 @@ class HaNMICCAI2015Dataset:
 
     def __len__(self):
         if self.grid:
-            return 200*len(self.paths_img)
+            if self.filter is None:
+                return 200*len(self.paths_img) # i.e. approx 200 grids per volume
+            else:
+                sampler_perc_data = 1.0 - getattr(config, self.name)['GRID_3D']['SAMPLER_PERC'] + 0.1
+                return int(200*len(self.paths_img)*sampler_perc_data)
         else:
             return len(self.paths_img)
 

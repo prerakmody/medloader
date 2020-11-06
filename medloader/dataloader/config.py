@@ -1,5 +1,4 @@
 import os
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 try:
@@ -14,6 +13,7 @@ PROSTATE = 'Prostrate'
 THORACIC = 'Thoracic'
 
 ################################### DIRNAME/FILENAME ###################################
+DIRNAME_MAIN = '_data'
 
 DIRNAME_PROCESSED = 'processed'
 DIRNAME_RAW = 'raw'
