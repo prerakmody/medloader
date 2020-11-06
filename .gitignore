@@ -8,3 +8,7 @@ __pycache__/
 
 # DEVELOPMENT ENVIRONMENT
 .vscode
+
+# OTHER EXTENSIONS
+.gz
+.pb

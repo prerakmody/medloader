@@ -1,7 +1,6 @@
-import os
 import pdb
-import time
 import json
+import itertools
 import traceback
 import numpy as np
 from pathlib import Path
@@ -12,7 +11,6 @@ if len(tf.config.list_physical_devices('GPU')):
 
 import medloader.dataloader.utils as utils
 import medloader.dataloader.config as config 
-import medloader.dataloader.tensorflow.augmentations as aug
 
 class HaNMICCAI2015Dataset:
     """
@@ -22,32 +20,51 @@ class HaNMICCAI2015Dataset:
     Dataset link: http://www.imagenglab.com/wiki/mediawiki/index.php?title=2015_MICCAI_Challenge
     """
 
-    def __init__(self, data_dir, dir_type, dimension=2, mask_type='one_hot', transforms=[]
-                    , resampled=False, in_memory=False, debug=False):
+    def __init__(self, data_dir, dir_type
+                    , dimension=3, grid=True, resampled=False, mask_type='one_hot'
+                    , transforms=[], filter=False
+                    , in_memory=False, patient_shuffle=False
+                    , debug=False, single_sample=False):
 
         self.name = '{}_MICCAI2015'.format(config.HEAD_AND_NECK)
 
-        # Params
+        # Params - Source 
         self.data_dir = data_dir
         self.dir_type = dir_type
+
+        # Params - Spatial (x,y)
         self.dimension = dimension
+        self.grid=grid
+        self.resampled=resampled
         self.mask_type = mask_type
+
+        # Params - Transforms/Filters
         self.transforms = transforms
-        self.resampled = resampled
-        self.debug = debug
+        self.filter = filter
+
+        # Params - Memory related
         self.in_memory = in_memory
-        
+        self.patient_shuffle = patient_shuffle
+
+        # Params - Debug
+        self.debug = debug
+        self.single_sample = single_sample
+
         # Data items
         self.data = {}
         self.paths_img = []
         self.paths_mask = []
+        self.cache = {}
 
         # Function calls
         self._download()
         self._init_data()
 
     def __len__(self):
-        return len(self.paths_img)
+        if self.grid:
+            return 200*len(self.paths_img)
+        else:
+            return len(self.paths_img)
 
     def _download(self):
         self.dataset_dir = Path(self.data_dir).joinpath(self.name)
@@ -86,6 +103,8 @@ class HaNMICCAI2015Dataset:
     
     def _init_data(self):
 
+        self.DIR_TYPES_TEST = ['test_offsite', 'test_onsite']
+        
         self.patient_meta_info = {}
         self.path_img_csv = ''
         self.path_mask_csv = ''
@@ -112,17 +131,26 @@ class HaNMICCAI2015Dataset:
                 self.path_mask_csv = Path(self.data_dir_processed_3D).joinpath(config.FILENAME_CSV_MASK_RESAMPLED)
 
         # Step 3 - Get patient meta info
+        if self.resampled is False:
+            print (' - [Warning][HaNMICCAI2015Dataset]: This datalader is not extracting 3D Volumes which have been resampled to the same 3D voxel spacing')
         for patient_dir in Path(self.data_dir_processed_3D).iterdir():
             if config.FILE_EXTENSION_CSV not in Path(patient_dir).parts[-1]:
                 for patient_file in Path(patient_dir).iterdir():
                     if config.FILE_EXTENSION_JSON in Path(patient_file).parts[-1]:
                         with open(patient_file, 'r') as fp:
                             patient_id = Path(patient_dir).parts[-1]
+
+                            brainstem_idxs = None
                             if self.resampled is False:
                                 brainstem_idxs = json.load(fp)[config.TYPE_VOXEL_ORIGSHAPE][config.KEYNAME_MEAN_BRAINSTEAM]
                             else:
-                                brainstem_idxs = json.load(fp)[config.TYPE_VOXEL_RESAMPLED][config.KEYNAME_MEAN_BRAINSTEAM]
-
+                                try:
+                                    brainstem_idxs = json.load(fp)[config.TYPE_VOXEL_RESAMPLED][config.KEYNAME_MEAN_BRAINSTEAM]
+                                except:
+                                    print (' - [ERROR][HaNMICCAI2015Dataset] There is no resampled data and you have set resample=True')
+                                    print ('  -- Delete the data/HaNMICCAI2015Dataset/processed directory and set config.VOXEL_RESO to a tuple of pixel spacing values for x,y,z axes')
+                                    print ('  -- Exiting now! ')
+                                    import sys; sys.exit(1)
                             mean_brainstem_idx = np.array(brainstem_idxs).astype(config.DATATYPE_VOXEL_IMG).tolist()
                             self.patient_meta_info[patient_id] = mean_brainstem_idx    
 
@@ -136,11 +164,21 @@ class HaNMICCAI2015Dataset:
             print (' -- [ERROR] self.path_mask_csv: ({}) {}'.format(Path(self.path_mask_csv).exists(), self.path_mask_csv ))
             pdb.set_trace()
         
-        # Step 5 - Other meta
+        # Step 5 - Meta for labels
         self.LABEL_MAP = getattr(config, self.name)['LABEL_MAP']
         self.LABELID_BACKGROUND = getattr(config, self.name)['LABELID_BACKGROUND']
-        self.DIMS_3D = getattr(config, self.name)['DIMS']['3D']
-                
+
+        # Step 6 - Meta for grid sampling
+        if self.dimension == 3 and self.grid:
+            if self.grid:
+                self.SAMPLER_PERC = getattr(config, self.name)['GRID_3D']['SAMPLER_PERC']
+                self.grid_size = getattr(config, self.name)['GRID_3D']['SIZE']
+                self.grid_overlap = getattr(config, self.name)['GRID_3D']['OVERLAP']
+                self.w_grid, self.h_grid, self.d_grid = self.grid_size
+                self.w_overlap, self.h_overlap, self.d_overlap = self.grid_overlap
+            else:
+                self.DIMS_3D = getattr(config, self.name)['DIMS']['3D_SAMPLER']
+                        
     def get_voxel_stats(self, show=False):
 
         spacing_x = []
@@ -178,6 +216,13 @@ class HaNMICCAI2015Dataset:
 
         try:
 
+            # Step 0 -
+            parallel_calls = None
+            if self.grid is False:
+                parallel_calls = tf.data.experimental.AUTOTUNE
+            else:
+                parallel_calls = 1
+
             if len(self.paths_img) and len(self.paths_mask):
                 
                 # Step 1 - Create basic generator
@@ -193,40 +238,37 @@ class HaNMICCAI2015Dataset:
                         ,args=())
 
                 # step 2 - Give the generator its own thread
-                dataset = dataset.map(lambda x,y,meta1,meta2: (x,y,meta1,meta2), num_parallel_calls=tf.data.experimental.AUTOTUNE) # dataset gets its own thread
-                # dataset = dataset.interleave(lambda x,y,meta1,meta2: dataset, block_length=1, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-
+                dataset = dataset.map(lambda x,y,meta1,meta2: (x,y,meta1,meta2), num_parallel_calls=1) # dataset gets its own thread
+                
+                # Step 3 - Get 3D data
                 if self.dimension == 3:
                     dataset = dataset.map(
                             lambda path_img,path_mask,meta1,meta2: tf.py_function(func=self.get_data_3D
                                                                                     , inp=[path_img,path_mask, meta1, meta2]
                                                                                     , Tout=[config.DATATYPE_TF_FLOAT32, config.DATATYPE_TF_FLOAT32, config.DATATYPE_TF_INT32, tf.string]
                                                                                 )
-                                    , num_parallel_calls=tf.data.experimental.AUTOTUNE
+                                    , num_parallel_calls=parallel_calls
                     )
                     
-                    if self.mask_type == config.MASK_TYPE_ONEHOT:
-                        if 1:
-                            dir_cache = Path(self.dataset_dir).joinpath(config.DIRNAME_PROCESSED, self.dir_type, config.DIRNAME_SAVE_3D, config.DIRNAMENAME_CACHED_TF)
-                            dir_cache.mkdir(parents=True, exist_ok=True)
-                            filepath_cache = Path(dir_cache).joinpath(config.DIRNAMENAME_CACHED_TF)
-                            dataset = dataset.cache(str(filepath_cache))
-                            dataset = dataset.shuffle(self.__len__(), reshuffle_each_iteration=True)
-                        else:
-                            dataset = dataset.cache()
-                            dataset = dataset.shuffle(self.__len__(), reshuffle_each_iteration=True)
-                
-                # Step 3 - Data augmentations
+                # Step 4 - Filter function
+                if self.filter:
+                    dataset = dataset.filter(self.filter)
+
+                # Step 5 - Data augmentations
                 if len(self.transforms):
                     for transform in self.transforms:
                         try:
-                            dataset = dataset.map(transform.execute, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                            dataset = dataset.map(transform.execute, num_parallel_calls=parallel_calls)
 
                         except:
                             traceback.print_exc()
                             print (' - [ERROR] Issue with transform: ', transform.name)
+                else:
+                    print ('')
+                    print (' - [INFO][HaNMICCAI2015Dataset] No transformations available!')
+                    print ('')
                 
-                # Step 4 - Other stuff
+                # Step 6 - Return
                 return dataset
             
             else:
@@ -237,117 +279,145 @@ class HaNMICCAI2015Dataset:
             pdb.set_trace()
             return None
 
+    def _get_paths(self, idx):
+        patient_id = ''
+        study_id = ''
+        path_img, path_mask = '', ''
+
+        if self.debug:
+            path_img = Path(self.paths_img[0]).absolute()
+            path_mask = Path(self.paths_mask[0]).absolute()
+            path_img, path_mask = self.path_debug_3D(path_img, path_mask)
+        else:
+            path_img = Path(self.paths_img[idx]).absolute()
+            path_mask = Path(self.paths_mask[idx]).absolute()
+
+        if path_img.exists() and path_mask.exists():
+            patient_id = Path(path_img).parts[-2]
+            study_id = Path(path_img).parts[-4]
+        else:
+            print (' - [ERROR] Issue with path')
+            print (' -- [ERROR] path_img : ', path_img)
+            print (' -- [ERROR] path_mask: ', path_mask)
+        
+        return path_img, path_mask, patient_id, study_id
+
     def _generator3D(self):
         try:
-            idxs = np.arange(len(self.paths_img))
-            np.random.shuffle(idxs)
             
-            for _,idx in enumerate(idxs):
-                patient_id = ''
-                study_id = ''
-    
-                path_img, path_mask = '', ''
-                if self.debug:
-                    path_img = Path(self.paths_img[0]).absolute()
-                    path_mask = Path(self.paths_mask[0]).absolute()
-                    path_img, path_mask = self.path_debug_3D(path_img, path_mask)
-                else:
-                    path_img = Path(self.paths_img[idx]).absolute()
-                    path_mask = Path(self.paths_mask[idx]).absolute()
+            # Step 0 - Init
+            res = []
 
-                if path_img.exists() and path_mask.exists():
-                    
-                    patient_id = Path(path_img).parts[-2]
-                    study_id = Path(path_img).parts[-4]
-                    
-                else:
-                    print (' - [ERROR] Issue with path')
-                    print (' -- [ERROR] path_img : ', path_img)
-                    print (' -- [ERROR] path_mask: ', path_mask)
-                    yield ('','','','')
+            # Step 1 - Get patient idxs
+            idxs = np.arange(len(self.paths_img)).tolist()  #[:3]
+            if self.single_sample: idxs = idxs[2:4]
+            if self.patient_shuffle: np.random.shuffle(idxs)
+
+            # Step 2 - Proceed on the basis of grid sampling or full-volume (self.grid=False) sampling
+            if self.grid:
                 
+                # Step 2.1 - Get grid sampler info for each patient-idx
+                sampler_info = {}
+                for idx in idxs:
+                    path_img = Path(self.paths_img[idx]).absolute() 
+                    path_img_parts = list(path_img.parts)
+                    path_img_parts[-1] = config.FILENAME_VOXEL_INFO
+                    path_json = Path(*path_img_parts)
+                    with open(path_json) as fp:
+                        voxelinfo = json.load(fp)
+                        if config.TYPE_VOXEL_RESAMPLED in str(path_img):
+                            voxel_shape = voxelinfo[config.TYPE_VOXEL_RESAMPLED][config.KEYNAME_SHAPE]    
+                        else:
+                            voxel_shape = voxelinfo[config.TYPE_VOXEL_ORIGSHAPE][config.KEYNAME_SHAPE]
 
-                crop_info = np.array(self.patient_meta_info[patient_id]).astype(np.int32).tolist()
-                meta1 = [idx] + crop_info
-                meta2 ='-'.join([self.name, study_id, patient_id])
-                path_img = str(path_img)
-                path_mask = str(path_mask)
+                        grid_idxs_width = utils.split_into_overlapping_grids(voxel_shape[0], len_grid=self.grid_size[0], len_overlap=self.grid_overlap[0])
+                        grid_idxs_height = utils.split_into_overlapping_grids(voxel_shape[1], len_grid=self.grid_size[1], len_overlap=self.grid_overlap[1])   
+                        grid_idxs_depth = utils.split_into_overlapping_grids(voxel_shape[2], len_grid=self.grid_size[2], len_overlap=self.grid_overlap[2])
+                        sampler_info[idx] = list(itertools.product(grid_idxs_width,grid_idxs_height,grid_idxs_depth))
+                        
+                # Step 2.2 - Loop over all patients and their grids
+                # Step 2.2.1 - If patients need to be shuffled (i.e during training)
+                if self.patient_shuffle:
+                    while len(idxs):
+                        np.random.shuffle(idxs)
+                        for i, idx in enumerate(idxs):
+                            if len(sampler_info[idx]):
 
-                yield (path_img, path_mask, meta1, meta2)
+                                path_img, path_mask, patient_id, study_id = self._get_paths(idx)
+                                if path_img.exists() and path_mask.exists():
+                                
+                                    pop_idx = np.random.randint(len(sampler_info[idx]))
+                                    grid_idxs = sampler_info[idx].pop(pop_idx)
+                                    meta1 = [idx] + [grid_idxs[0][0], grid_idxs[1][0], grid_idxs[2][0]] # only include w_start, h_start, d_start
+                                    meta2 ='-'.join([self.name, study_id, patient_id])
+                                    path_img = str(path_img)
+                                    path_mask = str(path_mask)
+
+                                    res.append((path_img, path_mask, meta1, meta2))
+                                    
+                            else:
+                                idxs.pop(i)
+                
+                # Step 2.2.2 - If patients and grids need to extracted in order (i.e. during eval)
+                else:
+                    for i, idx in enumerate(idxs):
+                        path_img, path_mask, patient_id, study_id = self._get_paths(idx)
+                        if path_img.exists() and path_mask.exists():
+                            for sample_info in sampler_info[idx]:
+                                grid_idxs = sample_info
+                                meta1 = [idx] + [grid_idxs[0][0], grid_idxs[1][0], grid_idxs[2][0]] # only include w_start, h_start, d_start
+                                meta2 ='-'.join([self.name, study_id, patient_id])
+                                path_img = str(path_img)
+                                path_mask = str(path_mask)
+                                res.append((path_img, path_mask, meta1, meta2))
+            
+            else:
+                for i, idx in enumerate(idxs):
+                    path_img, path_mask, patient_id, study_id = self._get_paths(idx)
+                    if path_img.exists() and path_mask.exists():
+                        meta1 = [idx] + [0,0,0] # dummy for w_start, h_start, d_start
+                        meta2 ='-'.join([self.name, study_id, patient_id])
+                        path_img = str(path_img)
+                        path_mask = str(path_mask)
+                        res.append((path_img, path_mask, meta1, meta2))
+
+            for each in res:
+                yield each
 
         except:
             traceback.print_exc()
             pdb.set_trace()
             yield ('','',[],'')
 
-    def _generator2D(self):
-        try:
-            idxs = np.arange(len(self.paths_img))
-            np.random.shuffle(idxs)
-            
-            LABEL_MAP = getattr(config, self.name)['LABEL_MAP']
-            for _,idx in enumerate(idxs):
-                
-                slice_img = []
-                slice_mask_classes = []
-                patient_id = ''
-                study_id = ''
-                slice_id = ''
+    def _get_cache_item(self, path_img, path_mask):
+        if 'img' in self.cache and 'mask' in self.cache:
+            if path_img in self.cache['img'] and path_mask in self.cache['mask']:
+                # print (' - [_get_cache_item()] ')
+                return self.cache['img'][path_img], self.cache['mask'][path_mask], self.cache['spacing']
+            else:
+                return None, None, None
+        else:
+            return None, None, None
 
-                # Step 1 - Check if in memory
-                if idx not in self.data:
+    def _set_cache_item(self, path_img, path_mask, vol_img, vol_mask, spacing):
+        # print (' - [_set_cache_item() ]: ', vol_img.shape, vol_mask.shape)
+        self.cache = {
+            'img': {path_img: vol_img}
+            , 'mask': {path_mask: vol_mask}
+            , 'spacing': spacing
+        }
 
-                    path_img, path_mask = '', ''
-                    if self.debug:
-                        path_img = Path(self.paths_img[0]).absolute()
-                        path_mask = Path(self.paths_mask[0]).absolute()
-                        path_img, path_mask = self.path_debug_2D(path_img, path_mask)
-                    else:
-                        path_img = Path(self.paths_img[idx]).absolute()
-                        path_mask = Path(self.paths_mask[idx]).absolute()
+    def _get_volume_from_path(self, path_img, path_mask):
 
-                    if Path(path_img).exists() and Path(path_mask).exists():
-                        
-                        patient_id = Path(path_img).parts[-3]
-                        study_id = Path(path_img).parts[-5]
-                        slice_id = Path(path_img).parts[-1].split('_')[1]
+        vol_img_sitk = utils.read_mha(path_img)
+        vol_img_npy = utils.sitk_to_array(vol_img_sitk)
 
-                        # Step 2.1 - Get img masks
-                        slice_img = np.load(path_img)
-                        slice_mask = np.load(path_mask)
+        vol_mask_sitk = utils.read_mha(path_mask)
+        vol_mask_npy = utils.sitk_to_array(vol_mask_sitk)     
 
-                        # Step 3 - One-hot or not
-                        if self.mask_type == config.MASK_TYPE_ONEHOT:
-                            label_ids = list(LABEL_MAP.values())
-                            slice_mask_classes = np.zeros((slice_img.shape[0], slice_img.shape[1], len(label_ids)))
-                            for label_id in label_ids:
-                                label_idxs = np.argwhere(slice_mask == label_id)
-                                slice_mask_classes[label_idxs[:,0], label_idxs[:,1], label_id] = 1
-                        else:
-                            slice_mask_classes = slice_mask
+        spacing = vol_img_sitk.GetSpacing()
 
-                        if self.in_memory:
-                            self.data[idx] = {'slice_img': slice_img, 'slice_mask_classes':slice_mask_classes}
-                    
-                    else:
-                        print (' - [ERROR] Issue with path')
-                        print (' -- [ERROR] path_img : ({}) {}'.format(Path(path_img).exists(), path_img ))
-                        print (' -- [ERROR] path_mask: ({}) {}'.format(Path(path_mask).exists(), path_mask ))
-                
-                else:
-                    slice_img = self.data[idx]['slice_img']
-                    slice_mask_classes = self.data[idx]['slice_mask_classes']
-
-                
-                crop_info = self.patient_meta_info[patient_id]
-                meta1 = [idx, crop_info[0], crop_info[1]]
-                meta2 = '-'.join([self.name, study_id, patient_id, slice_id])
-                
-                yield (np.expand_dims(slice_img, axis=2), slice_mask_classes, meta1, meta2)
-        
-        except:
-            traceback.print_exc()
-            pdb.set_trace()
+        return vol_img_npy, vol_mask_npy, spacing
 
     def get_data_3D(self, path_img, path_mask, meta1, meta2):
 
@@ -355,47 +425,77 @@ class HaNMICCAI2015Dataset:
         path_mask = path_mask.numpy().decode('utf-8')
         
         if Path(path_img).exists() and Path(path_mask).exists():
-
-            # Step 1 - Get raw images/masks and crop (to save on memory)
-            midpoint_info = meta1[1:4]
-            w_start = midpoint_info[0] - self.DIMS_3D['MIDPOINT_EXTENSION_W_LEFT']
-            w_end   = midpoint_info[0] + self.DIMS_3D['MIDPOINT_EXTENSION_W_RIGHT']
-            h_start = midpoint_info[1] - self.DIMS_3D['MIDPOINT_EXTENSION_H_FRONT']
-            h_end   = midpoint_info[1] + self.DIMS_3D['MIDPOINT_EXTENSION_H_BACK']
-            d_start = midpoint_info[2] - self.DIMS_3D['MIDPOINT_EXTENSION_D_BOTTOM']
-            d_end   = midpoint_info[2] + self.DIMS_3D['MIDPOINT_EXTENSION_D_TOP']
-
-            slice_img_sitk = utils.read_mha(path_img)
-            slice_img = utils.sitk_to_array(slice_img_sitk)
-            slice_mask_sitk = utils.read_mha(path_mask)
-            slice_mask = utils.sitk_to_array(slice_mask_sitk)
-            slice_img = slice_img[w_start:w_end, h_start:h_end, d_start:d_end]
-            slice_mask = slice_mask[w_start:w_end, h_start:h_end, d_start:d_end]
             
+            # Step 1 - Proceed on the basis of grid sampling or full-volume (self.grid=False) sampling
+            if self.grid:
+                
+                # Step 1.1 - Get raw images/masks and extract grid
+                w_start = meta1[1]
+                w_end   = w_start + self.grid_size[0]
+                h_start = meta1[2]
+                h_end   = h_start + self.grid_size[1]
+                d_start = meta1[3]
+                d_end   = d_start + self.grid_size[2]
+
+                vol_img_npy = None
+                vol_mask_npy = None
+                vol_img_shape_full = None
+                spacing = None
+                if self.patient_shuffle is False:
+                    vol_img_npy, vol_mask_npy, spacing = self._get_cache_item(path_img, path_mask)
+
+                    if vol_img_npy is None and vol_mask_npy is None:
+                        vol_img_npy, vol_mask_npy, spacing = self._get_volume_from_path(path_img, path_mask)    
+                        self._set_cache_item(path_img, path_mask, vol_img_npy, vol_mask_npy, spacing)   
+
+                else:
+                    vol_img_npy, vol_mask_npy, spacing = self._get_volume_from_path(path_img, path_mask)    
+                
+                # Step 1.2 - Extract grids
+                vol_img_npy = vol_img_npy[w_start:w_end, h_start:h_end, d_start:d_end]
+                vol_mask_npy = vol_mask_npy[w_start:w_end, h_start:h_end, d_start:d_end]
+            
+            else:
+                # Step 1.2 - Get full volume
+                vol_img_npy, vol_mask_npy, spacing = self._get_volume_from_path(path_img, path_mask)
+            
+            spacing = np.array(list(spacing))
+            vol_img_shape_full = vol_img_npy.shape
+
             # Step 2 - One-hot or not
+            vol_mask_classes = []
             label_ids_mask = []
+            label_ids = sorted(list(self.LABEL_MAP.values()))
             if self.mask_type == config.MASK_TYPE_ONEHOT:
-                label_ids = sorted(list(self.LABEL_MAP.values()))
-                slice_mask_classes = np.zeros((slice_img.shape[0], slice_img.shape[1], slice_img.shape[2], len(label_ids)))
+                vol_mask_classes = np.zeros((vol_mask_npy.shape[0], vol_mask_npy.shape[1], vol_mask_npy.shape[2], len(label_ids)))
                 for label_id in label_ids:
-                    label_idxs = np.argwhere(slice_mask == label_id)
+                    label_idxs = np.argwhere(vol_mask_npy == label_id)
                     if len(label_idxs):
-                        slice_mask_classes[label_idxs[:,0], label_idxs[:,1], label_idxs[:,2], label_id] = 1
+                        vol_mask_classes[label_idxs[:,0], label_idxs[:,1], label_idxs[:,2], label_id] = 1
                         label_ids_mask.append(1)
                     else:
                         label_ids_mask.append(0)
 
             elif self.mask_type == config.MASK_TYPE_COMBINED:
-                slice_mask_classes = slice_mask
-                slice_mask_classes = tf.expand_dims(slice_mask_classes, axis=3)
-            
-            x = tf.cast(tf.expand_dims(slice_img, axis=3), dtype=tf.float32)
-            y = tf.cast(slice_mask_classes, dtype=tf.float32)
-
-            # Step 3 - Add masks for one-hot data
+                vol_mask_classes = vol_mask_npy
+                unique_classes = np.unique(vol_mask_npy).astype(np.uint8)
+                for label_id in label_ids:
+                    if label_id in unique_classes: label_ids_mask.append(1)
+                    else: label_ids_mask.append(0)
+                
             if self.mask_type == config.MASK_TYPE_ONEHOT:
-                label_ids_mask = tf.constant(label_ids_mask, dtype=tf.int32)
-                meta1 = tf.concat([meta1, label_ids_mask], axis=0)
+                x = tf.cast(tf.expand_dims(vol_img_npy, axis=3), dtype=tf.float32) # [H,W,D,1]
+            else:
+                x = tf.cast(vol_img_npy, dtype=tf.float32) # [H,W,D]
+
+            y = tf.cast(vol_mask_classes, dtype=tf.float32)
+            
+            # Step 3 - Add masks for one-hot data
+            
+            spacing = tf.constant(spacing*100, dtype=tf.int32)
+            label_ids_mask = tf.constant(label_ids_mask, dtype=tf.int32)
+            slice_img_shape_full = tf.constant(vol_img_shape_full, dtype=tf.int32)
+            meta1 = tf.concat([meta1, spacing, slice_img_shape_full, label_ids_mask], axis=0)
 
             # Step 4 - return
             return (x,y,meta1, meta2)
@@ -406,37 +506,8 @@ class HaNMICCAI2015Dataset:
             print (' -- [ERROR] path_mask: ', path_mask)
             return ([], [], meta1, meta2)
 
-    def path_debug_2D(self, path_img, path_mask):
-        patient_id = '0522c0195'   # [0522c0125/40, 0522c0009/72, 0522c0195/70]
-        slice_number = 70
-        
-        path_img_parts = list(Path(path_img).parts)
-        if self.resampled:
-            path_img_parts[-1] = config.FILENAME_IMG_RESAMPLED_NPY_2D.format(patient_id, slice_number)
-        else:
-            path_img_parts[-1] = config.FILENAME_IMGNPY_2D.format(patient_id, slice_number)
-        path_img_parts[-3] = patient_id
-        path_img = Path(*path_img_parts)
-        
-        path_mask_parts = list(Path(path_mask).parts)
-        if self.resampled:
-            path_mask_parts[-1] = config.FILENAME_MASK_RESAMPLED_NPY_2D.format(patient_id, slice_number)
-        else:      
-            path_mask_parts[-1] = config.FILENAME_MASKNPY_2D.format(patient_id, slice_number)
-        path_mask_parts[-3] = patient_id
-        path_mask = Path(*path_mask_parts)
-        
-        utils.print_debug_header()
-        print (' - path_img : ', path_img.parts[-2:])
-        print (' - path_mask: ', path_mask.parts[-2:])
-
-        self.paths_img = [path_img]
-        self.paths_mask = [path_mask] 
-
-        return path_img, path_mask 
-    
     def path_debug_3D(self, path_img, path_mask):
-        patient_number = '0522c0190'
+        patient_number = '0522c0251'
         path_img_parts = list(Path(path_img).parts)
 
         path_img_parts = list(Path(path_img).parts)
@@ -447,9 +518,10 @@ class HaNMICCAI2015Dataset:
         path_mask_parts[-2] = patient_number
         path_mask = Path(*path_mask_parts)
 
-        utils.print_debug_header()
-        print (' - path_img : ', path_img.parts[-2:])
-        print (' - path_mask: ', path_mask.parts[-2:])
+        if 0:
+            utils.print_debug_header()
+            print (' - path_img : ', path_img.parts[-2:])
+            print (' - path_mask: ', path_mask.parts[-2:])
 
         self.paths_img = [path_img]
         self.paths_mask = [path_mask] 

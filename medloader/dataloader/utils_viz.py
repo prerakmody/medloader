@@ -310,7 +310,7 @@ def viz_3d_mask(voxel_masks, dataset, meta1, meta2):
                 margin=dict(r=20, l=50, b=10, t=50)
             )
             fig.update_layout(legend_title_text='Labels', showlegend=True)
-            fig.update_layout(scene_aspectmode='cube')
+            fig.update_layout(scene_aspectmode='data') # [data, cube]
             fig.update_layout(title_text='{} (BatchId={})'.format(meta2, batch_id))
             fig.show()
 
