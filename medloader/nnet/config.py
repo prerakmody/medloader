@@ -8,6 +8,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 MODEL_ATTENTIONUNET3D = 'AttentionUnet3D'
 MODEL_UNET3D = 'UNet3D'
+MODEL_UNET3DSMALL = 'UNet3DSmall'
 
 OPTIMIZER_ADAM = 'Adam'
 

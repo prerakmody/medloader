@@ -137,6 +137,49 @@ class ModelUNet3D(tf.keras.Model):
             traceback.print_exc()
             pdb.set_trace()
 
+class ModelUNet3DSmall(tf.keras.Model):
+
+    def __init__(self, class_count, activation='softmax', trainable=False, verbose=False):
+        super(ModelUNet3DSmall, self).__init__(name='ModelUNet3DSmall')
+
+        self.verbose = verbose
+        
+        # dropout = [0, 0, 0, 0.2, 0.3, 0.2, 0, 0, 0]
+        dropout = [0.1, 0.1, 0.2, 0.1, 0.1]
+        filters = [[8],[16],[32]]
+
+        if 1:
+            self.convblock1 = ConvBlock3D(filters=filters[0]  , pool=True , dropout=dropout[0], trainable=trainable, name='Block1') # Dim/2 (e.g. 96/2=48)
+            self.convblock2 = ConvBlock3D(filters=filters[1]  , pool=True , dropout=dropout[1], trainable=trainable, name='Block2') # Dim/4 (e.g. 96/4=24)
+            
+            self.convblock3 = ConvBlock3D(filters=filters[2]  , pool=False , dropout=dropout[2], trainable=trainable, name='Block3') # Dim/8 (e.g. 96/8=12)
+            
+            self.upconvblock4 = UpConvBlock3D(filters=filters[1][0], trainable=trainable, name='Block4')
+            self.convblock4   = ConvBlock3D(filters=filters[1], pool=False, dropout=dropout[3], trainable=trainable, name='Block4') 
+            
+            self.upconvblock5 = UpConvBlock3D(filters=filters[0][0], trainable=trainable, name='Block5')
+            self.convblock5   = ConvBlock3D(filters=filters[0], pool=False, dropout=dropout[4], trainable=trainable, name='Block5')
+            
+            self.convblock6  = tf.keras.layers.Conv3D(filters=class_count, kernel_size=(1,1,1), padding='same'
+                                , activation=activation
+                                , name='Block6')
+    
+    def call(self,x):
+        conv1, pool1 = self.convblock1(x)
+        conv2, pool2 = self.convblock2(pool1)
+
+        conv3 = self.convblock3(pool2)
+        
+        up4   = self.upconvblock4(conv3)
+        conv4 = self.convblock4(tf.concat([conv2, up4], axis=-1))
+
+        up5   = self.upconvblock5(conv4)
+        conv5 = self.convblock5(tf.concat([conv1, up5], axis=-1))
+
+        conv6 = self.convblock6(conv5)
+
+        return conv6
+
 class AttentionBlock3D(tf.keras.Model):
 
     def __init__(self, filters, kernel_size=(1,1,1), strides=(1,1,1), padding='same', trainable=False, name=''):
@@ -271,3 +314,4 @@ class AttentionUnet3D(tf.keras.Model):
             print (' - conv10: ', conv10.shape)
                         
         return conv10
+    

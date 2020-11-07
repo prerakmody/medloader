@@ -68,6 +68,8 @@ class Trainer:
         # Step 2 - Get model arch
         if self.params['model']['name'] == config.MODEL_UNET3D:
             self.model = models.ModelUNet3D(class_count=class_count, trainable=True)
+        elif self.params['model']['name'] == config.MODEL_UNET3DSMALL:
+            self.model = models.ModelUNet3DSmall(class_count=class_count, trainable=True)
         elif self.params['model']['name'] == config.MODEL_ATTENTIONUNET3D:
             self.model = models.AttentionUnet3D(class_count=class_count, trainable=True)
         
@@ -219,6 +221,6 @@ class Trainer:
                     
                     
             except:
-                utils.save_model(exp_name, self.model, epoch, {'optimizer':self.optimizer})
+                utils.save_model(exp_name, self.model, epoch, {'optimizer':self.optimizer, 'MAIN_DIR': self.params['MAIN_DIR']})
                 traceback.print_exc()
                 pdb.set_trace()

@@ -20,9 +20,9 @@ This repository contains code for downloading, sorting, extracting (to [.mha i.e
 4. To download/sort/extract the MICCAI 2015 dataset
     - Keep `medloader.dataloader.config.VOXEL_RESO` as an empty tuple `=()` if you dont want to resmaple
         - Time consuming step (_but it is recommended that all 3D volumes have the same pixel spacing_)
-    - `python demo/tf_han_miccai2015.py`
-        - This shall create a `./data/MICCAI2015_HaN` directory with `raw/` and `processed/` data files for each patient
-        - If `medloader.dataloader.config.VOXEL_RESO` is kept empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015.get_dataset_han_micca2015`
+    - `python demo/tf_han_miccai2015_trainer.py`
+        - This shall create a `./_data/HaN_MICCAI2015` directory with `raw/` and `processed/` data files for each patient
+        - If `medloader.dataloader.config.VOXEL_RESO` is kept empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015_trainer.params.dataloader`
 
 ## CleanUp
 1. Remove conda env
