@@ -4,15 +4,16 @@ from pathlib import Path
 import medloader.nnet.config as config
 import medloader.nnet.tensorflow.train as train
 
+# Step 1 - Set MAIN_DIR
 MAIN_DIR = Path(__file__).parent.absolute().parent.absolute()
-data_dir = Path(MAIN_DIR).joinpath('data')
 
+# Step 2 - Set dataloader, model and metrics params
 params = {
     'MAIN_DIR': MAIN_DIR
     , 'random_seed': 42
     , 'exp_name': 'UNet3D_seed42'
     , 'dataloader': {
-        'data_dir': data_dir
+        'data_dir': Path(MAIN_DIR).joinpath('_data')
         , 'name': config.DATALOADER_MICCAI2015
         , 'resampled': True
         , 'single_sample': True
@@ -28,6 +29,8 @@ params = {
         , 'epochs_eval': 40
         , 'epochs_viz': 100
         , 'load_model': {'load': False, 'load_epoch':-1}
+        , 'tboard_arch': False
+        , 'profile': False
     }
     , 'metrics':{
         'metrics_loss': {'Dice': config.LOSS_DICE}
@@ -36,5 +39,6 @@ params = {
     }
 }
 
+# Call the trainer
 trainer = train.Trainer(params)
 trainer.train()

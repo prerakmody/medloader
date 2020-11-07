@@ -11,8 +11,8 @@ from pathlib import Path
 import medloader.dataloader.config as config
 import medloader.dataloader.utils as utils
 
-if config.IPYTHON_FLAG:tqdm_func = tqdm.tqdm
-else:tqdm_func = tqdm.tqdm_notebook
+if config.IPYTHON_FLAG : tqdm_func = tqdm.tqdm_notebook
+else                   : tqdm_func = tqdm.tqdm
 
 class HaNMICCAI2015Downloader:
 

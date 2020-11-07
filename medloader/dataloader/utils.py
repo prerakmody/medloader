@@ -11,19 +11,18 @@ import SimpleITK as sitk # sitk.Version.ExtendedVersionString()
 
 import medloader.dataloader.config as config
 
-if config.IPYTHON_FLAG : tqdm_func = tqdm.tqdm
-else                   : tqdm_func = tqdm.tqdm_notebook
+if config.IPYTHON_FLAG : tqdm_func = tqdm.tqdm_notebook
+else                   : tqdm_func = tqdm.tqdm
 
 ############################################################
 #                    DOWNLOAD RELATED                      #
 ############################################################
 
-# print (tqdm_func)
-# class DownloadProgressBar(tqdm_func):
-#     def update_to(self, b=1, bsize=1, tsize=None):
-#         if tsize is not None:
-#             self.total = tsize
-#         self.update(b * bsize - self.n)
+class DownloadProgressBar(tqdm.tqdm):
+    def update_to(self, b=1, bsize=1, tsize=None):
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)
 
 def download_zip(url_zip, filepath_zip, filepath_output, position_id=0):
     import urllib

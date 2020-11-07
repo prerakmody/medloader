@@ -145,7 +145,7 @@ class Trainer:
                 print (' ================== EPOCH:{} (LR={:3f}) =================='.format(epoch, self.optimizer.lr.numpy()))
 
                 # Profiling
-                if epoch == 1:
+                if epoch == 1 and self.params['model']['profile']:
                     self.logdir = Path(config.MODEL_CHKPOINT_MAINFOLDER).joinpath(exp_name, config.MODEL_LOGS_FOLDERNAME, 'profiler')
                     tf.profiler.experimental.start(str(self.logdir))
                     print (' - tf.profiler.experimental.start(logdir)')
@@ -158,7 +158,7 @@ class Trainer:
                     for (X,Y,meta1,meta2) in self.dataset_train.generator().batch(batch_size):
                         t1_ = time.time()
                         
-                        if self.write_flag_model:
+                        if self.write_flag_model and self.params['model']['tboard_arch']:
                             self.write_flag_model = False 
                             utils.write_model_tboard(self.model, X, self.params)
 
@@ -208,7 +208,7 @@ class Trainer:
                         t1 = time.time() # reset dataloader time calculator
 
                     # Profiling
-                    if epoch == 1:
+                    if epoch == 1 and self.params['model']['profile']:
                         tf.profiler.experimental.stop()
                         print (' - tf.profiler.experimental.stop()')
                         print (' - Run the command `tensorboard --logdir={}`'.format(self.logdir))

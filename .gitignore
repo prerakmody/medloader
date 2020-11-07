@@ -1,7 +1,8 @@
 # DATA FOLDERS
 data/
-_tmp/
 models/
+_data/
+_models/
 logs/
 
 # PYTHON FOLDERS/FILES
