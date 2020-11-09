@@ -1,72 +1,6 @@
 import pdb
-import math
 import traceback
-import numpy as np
-from pathlib import Path
-
-import SimpleITK as sitk
 import tensorflow as tf
-
-import medloader.dataloader.utils as utils
-import medloader.dataloader.config as config
-
-class Rotate2D:
-
-    def __init__(self):
-        self.name = 'Rotate'
-
-    def execute(self, x, y, meta1, meta2):
-        try:
-            if tf.random.uniform([], minval=0, maxval=1, dtype=tf.dtypes.float32) <= 0.5:
-                rotate_count =  tf.random.uniform([], minval=1, maxval=4, dtype=tf.dtypes.int32)
-                return tf.image.rot90(x, rotate_count), tf.image.rot90(y, rotate_count), meta1, meta2
-            else:
-                return x, y, meta1, meta2
-        except:
-            traceback.print_exc()
-            return x, y, meta1, meta2
-
-class Crop2DOld:
-
-    def __init__(self, h_start, h_end, w_start, w_end):
-        self.h_start = h_start
-        self.h_end = h_end
-        self.w_start = w_start
-        self.w_end = w_end
-        self.name = 'Crop2D'
-
-    def execute(self, x ,y ,meta1, meta2):
-        x = x[self.h_start:self.h_end, self.w_start:self.w_end]
-        y = y[self.h_start:self.h_end, self.w_start:self.w_end]
-        return x,y,meta1,meta2
-
-class Crop2D:
-
-    def __init__(self):
-        self.name = 'Crop2D'
-    
-    def execute(self, x ,y ,meta1, meta2):
-    
-        midpoint_info = meta1[1:]
-        x_start = midpoint_info[0] - config.MIDPOINT_EXTENSION_PX_2D_MICCAI
-        x_end = midpoint_info[0] + config.MIDPOINT_EXTENSION_PX_2D_MICCAI
-        y_start = midpoint_info[1] - config.MIDPOINT_EXTENSION_PX_2D_MICCAI
-        y_end = midpoint_info[1] + config.MIDPOINT_EXTENSION_PX_2D_MICCAI
-        x = x[x_start:x_end , y_start:y_end]
-        y = y[x_start:x_end , y_start:y_end]
-
-        return x,y,meta1,meta2
-
-class NormalizeMinMax:
-
-    def __init__(self):
-        self.name = 'NormalizeMinMax'
-
-    def execute(self, x, y, meta1, meta2):
-        x_min = tf.math.reduce_min(x)
-        x_max = tf.math.reduce_max(x)
-        x = (x - x_min) / (x_max - x_min)
-        return x,y,meta1,meta2
 
 class NormalizeMinMaxSampler:
 
@@ -83,14 +17,6 @@ class NormalizeMinMaxSampler:
         x = tf.math.minimum(x, tf.fill(dims=self.x_shape, value=x_max))
         x = (x - x_min) / (x_max - x_min)
         return x,y,meta1,meta2
-
-class Deform3D:
-
-    def __init__(self):
-        pass
-
-    def execute(self):
-        pass
 
 class Crop3D:
 
@@ -188,51 +114,3 @@ class FilterByMask:
             else:
                 return True
 
-class Deform:
-
-    def __init__(self, numcontrolpoints):
-        self.name = 'Deform'
-        self.numcontrolpoints = numcontrolpoints
-
-    def execute(self, x, y, meta1, meta2):
-
-        """
-        x = [H,W,D]
-        y = [H,W,D]
-        """
-
-        sitkImage=sitk.GetImageFromArray(x, isVector=False)
-        sitklabel=sitk.GetImageFromArray(y, isVector=False)
-        transfromDomainMeshSize=[self.numcontrolpoints]*sitkImage.GetDimension()
-        tx = sitk.BSplineTransformInitializer(sitkImage,transfromDomainMeshSize)
-        resampler = sitk.ResampleImageFilter()
-        resampler.SetReferenceImage(sitkImage)
-        resampler.SetInterpolator(sitk.sitkLinear)
-        resampler.SetDefaultPixelValue(0)
-        resampler.SetTransform(tx)
-
-        resampler.SetDefaultPixelValue(0)
-        outimgsitk = resampler.Execute(sitkImage)
-        outlabsitk = resampler.Execute(sitklabel)
-
-        outimg = sitk.GetArrayFromImage(outimgsitk)
-        x = outimg.astype(dtype=np.float32)
-
-        outlbl = sitk.GetArrayFromImage(outlabsitk)
-        y = (outlbl>0.5).astype(dtype=np.float32)
-
-        return x,y,meta1, meta2
-
-class HistEq:
-    # Use with tf.py_function
-    """
-    def random_rotate_image(image): return ndimage.rotate(image, np.random.uniform(-30, 30), reshape=False)
-    def tf_random_rotate_image(image, label): return tf.py_function(random_rotate_image, [image], [tf.float32]), label
-    ds.map(tf_random_rotate_image)
-    """
-    import skimage
-    import skimage.exposure
-    def execute(self, x, y, z):
-        x = skimage.exposure.equalize_adapthist(x)
-        x = slice_raw.astype(np.float32)
-        return x,y,z

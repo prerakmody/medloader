@@ -11,6 +11,9 @@ import numpy as np
 import tensorflow as tf
 from pathlib import Path
 
+if len(tf.config.list_physical_devices('GPU')):
+    tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
+
 import medloader.nnet.config as config
 import medloader.nnet.tensorflow.utils as utils
 import medloader.nnet.tensorflow.models as models
@@ -41,6 +44,8 @@ class Trainer:
 
         # Other flags
         self.write_flag_model = True
+        self.profiler_started = False
+        self.train_step = 0
 
         # Print vars
         self.train_preprint()
@@ -101,6 +106,7 @@ class Trainer:
         print (' - Loss: ', self.params['metrics']['metrics_loss'])
         print (' - Eval: ', self.params['metrics']['metrics_eval'])
         print (' - Model: ', str(self.model))
+        print (' -- TBoard Arch: ', self.params['model']['tboard_arch'])
         print (' -- Kernel Reg: ', self.params['model']['kernel_reg'])
         print ('')
         print (' - Batch Size: ', self.params['dataloader']['batch_size'])
@@ -109,6 +115,7 @@ class Trainer:
         print (' - Viz3D every {} epochs: '.format(self.params['model']['epochs_viz']))
         print ('')
         print (' - OS-PID: ', os.getpid())
+        print (' - TFlow Profiler: ', self.params['model']['profiler'])
         print ('')
         if self.params['dataloader']['single_sample']:
             print (' !!!!!!!!!!!!!!!!!!! SINGLE SAMPLE !!!!!!!!!!!!!!!!!!!')
@@ -136,6 +143,7 @@ class Trainer:
         trainMetrics = self.metrics[self.mode_train]
 
         for epoch in self.epoch_range:
+
             try:
                 
                 # Epoch starter code
@@ -146,23 +154,26 @@ class Trainer:
                 print ('')
                 print (' ================== EPOCH:{} (LR={:3f}) =================='.format(epoch, self.optimizer.lr.numpy()))
 
-                # Profiling
-                if epoch == 1 and self.params['model']['profile']:
-                    self.logdir = Path(config.MODEL_CHKPOINT_MAINFOLDER).joinpath(exp_name, config.MODEL_LOGS_FOLDERNAME, 'profiler')
-                    tf.profiler.experimental.start(str(self.logdir))
-                    print (' - tf.profiler.experimental.start(logdir)')
-
                 with tqdm.tqdm(total=len(self.dataset_train), desc='') as pbar:
 
                     t1 = time.time()
-                    loss_val = 0
-
+                    
                     for (X,Y,meta1,meta2) in self.dataset_train.generator().batch(batch_size):
                         t1_ = time.time()
                         
+                        # Model Writing to tensorboard
                         if self.write_flag_model and self.params['model']['tboard_arch']:
                             self.write_flag_model = False 
                             utils.write_model_tboard(self.model, X, self.params)
+                        
+                        # Start Profiling (after dataloader is kicked off)
+                        if epoch in [1,2] and self.params['model']['profile'] and self.profiler_started is False and self.train_step > 0:
+                            self.profiler_started = True
+                            self.logdir = Path(config.MODEL_CHKPOINT_MAINFOLDER).joinpath(exp_name, config.MODEL_LOGS_FOLDERNAME, 'profiler', str(epoch))
+                            tf.profiler.experimental.start(str(self.logdir))
+                            print (' - tf.profiler.experimental.start(logdir)')
+                            print (' -- shall profile for epochs=[1,2] ')
+                            print ('')
 
                         # Step 1 - Calculate loss and gradients from them
                         loss_vals = 0
@@ -183,7 +194,7 @@ class Trainer:
                                 if metrics_loss[metric_str] in [config.LOSS_DICE, config.LOSS_CE]:   
                                     loss_val_train, loss_labellist_train, loss_val_report, loss_labellist_report = trainMetrics.losses_obj[metric_str](Y, y_predict, mask, weighted=weighted)
                                     trainMetrics.update_metric_loss_labels(metric_str, loss_labellist_report, do_average=True)
-                                    loss_vals += loss_val_train
+                                    loss_vals = tf.math.add(loss_vals, loss_val_train)
                         
                             if len(self.model.losses) and self.params['model']['kernel_reg']:
                                 loss_vals = tf.math.add(loss_vals, tf.math.add_n(self.model.losses))
@@ -208,16 +219,23 @@ class Trainer:
 
                         # Step 4 - End loop
                         t1 = time.time() # reset dataloader time calculator
+                        self.train_step += 1
 
-                    # Profiling
-                    if epoch == 1 and self.params['model']['profile']:
+                    # Step 5.1 - End Profiling
+                    if epoch in [1,2] and self.params['model']['profile'] and self.profiler_started:
+                        self.profiler_started = False
+                        self.train_step = 0
                         tf.profiler.experimental.stop()
                         print (' - tf.profiler.experimental.stop()')
-                        print (' - Run the command `tensorboard --logdir={}`'.format(self.logdir))
+                        print (' - Run the command `tensorboard --logdir={}`'.format(Path(self.logdir).parent.absolute()))
+                        print ('')
 
-                    # Step 5.1 - Model save
+                    # Step 5.2 - Model save
                     if epoch % epochs_save == 0:
                         utils.save_model(exp_name, self.model, epoch, {'optimizer':self.optimizer})
+                    
+                    # Step 5.3 - Train Epochs summary
+                    trainMetrics.write_epoch_summary(epoch, {'optimizer':self.optimizer})
                     
                     
             except:

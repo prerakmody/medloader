@@ -23,6 +23,8 @@ This repository contains code for downloading, sorting, extracting (to [.mha i.e
     - `python demo/tf_han_miccai2015_trainer.py`
         - This shall create a `./_data/HaN_MICCAI2015` directory with `raw/` and `processed/` data files for each patient
         - If `medloader.dataloader.config.VOXEL_RESO` is kept empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015_trainer.params.dataloader`
+    - Note
+        - You may want to remove patient-id=`0522c0125` due to its small dimensions in the z-axis
 
 ## CleanUp
 1. Remove conda env

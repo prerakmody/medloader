@@ -6,8 +6,6 @@ import numpy as np
 from pathlib import Path
 
 import tensorflow as tf
-if len(tf.config.list_physical_devices('GPU')):
-    tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
 
 import medloader.dataloader.utils as utils
 import medloader.dataloader.config as config 
@@ -430,6 +428,10 @@ class HaNMICCAI2015Dataset:
         
         if Path(path_img).exists() and Path(path_mask).exists():
             
+            vol_img_shape_full = None
+            vol_img_npy = None
+            vol_mask_npy = None
+            
             # Step 1 - Proceed on the basis of grid sampling or full-volume (self.grid=False) sampling
             if self.grid:
                 
@@ -441,9 +443,8 @@ class HaNMICCAI2015Dataset:
                 d_start = meta1[3]
                 d_end   = d_start + self.grid_size[2]
 
-                vol_img_npy = None
-                vol_mask_npy = None
-                vol_img_shape_full = None
+                
+                
                 spacing = None
                 if self.patient_shuffle is False:
                     vol_img_npy, vol_mask_npy, spacing = self._get_cache_item(path_img, path_mask)
@@ -456,15 +457,19 @@ class HaNMICCAI2015Dataset:
                     vol_img_npy, vol_mask_npy, spacing = self._get_volume_from_path(path_img, path_mask)    
                 
                 # Step 1.2 - Extract grids
+                vol_img_shape_full = vol_img_npy.shape
                 vol_img_npy = vol_img_npy[w_start:w_end, h_start:h_end, d_start:d_end]
                 vol_mask_npy = vol_mask_npy[w_start:w_end, h_start:h_end, d_start:d_end]
             
             else:
                 # Step 1.2 - Get full volume
                 vol_img_npy, vol_mask_npy, spacing = self._get_volume_from_path(path_img, path_mask)
+                vol_img_shape_full = vol_img_npy.shape
             
             spacing = np.array(list(spacing))
-            vol_img_shape_full = vol_img_npy.shape
+            
+            assert vol_img_npy.shape  == (self.w_grid,self.h_grid,self.d_grid), '\n\n[ERROR] patient: '  + str(meta2.numpy()) + '\n' +  str(vol_img_npy.shape) + str(meta1[4:].numpy()) + ' -- ' + str(vol_img_shape_full)
+            assert vol_mask_npy.shape == (self.w_grid,self.h_grid,self.d_grid), '\n\n[ERROR] patient: ' + str(meta2.numpy()) + '\n' + str(vol_mask_npy.shape) + str(meta1[4:].numpy()) + ' -- ' + str(vol_img_shape_full)
 
             # Step 2 - One-hot or not
             vol_mask_classes = []
@@ -486,7 +491,8 @@ class HaNMICCAI2015Dataset:
                 for label_id in label_ids:
                     if label_id in unique_classes: label_ids_mask.append(1)
                     else: label_ids_mask.append(0)
-                
+
+            # Step 3 - Dtype conversion and expading dimensions            
             if self.mask_type == config.MASK_TYPE_ONEHOT:
                 x = tf.cast(tf.expand_dims(vol_img_npy, axis=3), dtype=tf.float32) # [H,W,D,1]
             else:
@@ -494,14 +500,13 @@ class HaNMICCAI2015Dataset:
 
             y = tf.cast(vol_mask_classes, dtype=tf.float32)
             
-            # Step 3 - Add masks for one-hot data
-            
+            # Step 4 - Append info to meta1
             spacing = tf.constant(spacing*100, dtype=tf.int32)
             label_ids_mask = tf.constant(label_ids_mask, dtype=tf.int32)
             slice_img_shape_full = tf.constant(vol_img_shape_full, dtype=tf.int32)
             meta1 = tf.concat([meta1, spacing, slice_img_shape_full, label_ids_mask], axis=0)
 
-            # Step 4 - return
+            # Step 5 - return
             return (x,y,meta1, meta2)
         
         else:

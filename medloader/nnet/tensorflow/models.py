@@ -54,7 +54,7 @@ class UpConvBlock3D(tf.keras.layers.Layer):
                         , kernel_regularizer=tf.keras.regularizers.l2(0.01)
                         , name='UpConv_{}'.format(self.name))
                     )
-        self.upconv_layer.add(tf.keras.layers.BatchNormalization(trainable=trainable))
+        # self.upconv_layer.add(tf.keras.layers.BatchNormalization(trainable=trainable))
     
     def call(self, x):
         return self.upconv_layer(x)
