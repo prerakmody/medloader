@@ -72,7 +72,7 @@ class Trainer:
 
         # Step 2 - Get model arch
         if self.params['model']['name'] == config.MODEL_UNET3D:
-            self.model = models.ModelUNet3D(class_count=class_count, trainable=True)
+            self.model = models.ModelUNet3D(class_count=class_count, trainable=True, activation='sigmoid')
         elif self.params['model']['name'] == config.MODEL_UNET3DSMALL:
             self.model = models.ModelUNet3DSmall(class_count=class_count, trainable=True)
         elif self.params['model']['name'] == config.MODEL_ATTENTIONUNET3D:
@@ -115,7 +115,7 @@ class Trainer:
         print (' - Viz3D every {} epochs: '.format(self.params['model']['epochs_viz']))
         print ('')
         print (' - OS-PID: ', os.getpid())
-        print (' - TFlow Profiler: ', self.params['model']['profiler'])
+        print (' - TFlow Profiler: ', self.params['model']['profile'])
         print ('')
         if self.params['dataloader']['single_sample']:
             print (' !!!!!!!!!!!!!!!!!!! SINGLE SAMPLE !!!!!!!!!!!!!!!!!!!')
