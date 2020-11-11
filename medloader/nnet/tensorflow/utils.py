@@ -1,4 +1,7 @@
+import gc
 import pdb
+import time
+import tqdm
 import traceback
 import numpy as np
 from pathlib import Path
@@ -382,7 +385,7 @@ class ModelMetrics():
             if len(metric_avg):
                 self.metrics_eval_obj[metric_str]['total'].update_state(np.mean(metric_avg))
 
-    def write_epoch_summary(self, epoch, label_map, params=None):
+    def write_epoch_summary(self, epoch, label_map, params=None, eval_condition=False):
 
         # Metrics for losses (during training for smaller grids)
         for metric_str in self.metrics_loss_obj:
@@ -393,12 +396,13 @@ class ModelMetrics():
                     make_summary('Loss/{}/{}'.format(metric_str, label_name), epoch, writer1=self.writers_loss_obj[metric_str][label_id], value1=self.metrics_loss_obj[metric_str][label_id].result())
         
         # Metrics for eval (for full 3D volume)
-        for metric_str in self.metrics_eval_obj:
-            make_summary('Eval3D/{}'.format(metric_str), epoch, writer1=self.writers_eval_obj[metric_str]['total'], value1=self.metrics_eval_obj[metric_str]['total'].result())
-            if len(self.metrics_eval_obj[metric_str]) > 1: # i.e. has label ids
-                for label_id in self.label_ids:
-                    label_name, _ = get_info_from_label_id(label_id, label_map)
-                    make_summary('Eval3D/{}/{}'.format(metric_str, label_name), epoch, writer1=self.writers_eval_obj[metric_str][label_id], value1=self.metrics_eval_obj[metric_str][label_id].result())
+        if eval_condition:
+            for metric_str in self.metrics_eval_obj:
+                make_summary('Eval3D/{}'.format(metric_str), epoch, writer1=self.writers_eval_obj[metric_str]['total'], value1=self.metrics_eval_obj[metric_str]['total'].result())
+                if len(self.metrics_eval_obj[metric_str]) > 1: # i.e. has label ids
+                    for label_id in self.label_ids:
+                        label_name, _ = get_info_from_label_id(label_id, label_map)
+                        make_summary('Eval3D/{}/{}'.format(metric_str, label_name), epoch, writer1=self.writers_eval_obj[metric_str][label_id], value1=self.metrics_eval_obj[metric_str][label_id].result())
 
         # Time Metrics
         make_summary('Info/Time/Dataloader'   , epoch, writer1=self.writer_time_dataloader    , value1=self.metric_time_dataloader.result())
@@ -422,7 +426,6 @@ class ModelMetrics():
         
         pbar.set_description(desc=desc_str, refresh=True)
 
-
 def get_info_from_label_id(label_id, label_map, label_colors=None):
     """
     The label_id param has to be greater than 0
@@ -442,3 +445,198 @@ def get_info_from_label_id(label_id, label_map, label_colors=None):
         label_color = None
 
     return label_name, label_color
+
+def eval_3D_create_folder(epoch, params):
+    folder_name = config.MODEL_CHKPOINT_NAME_FMT.format(epoch)
+    model_folder_epoch_save = Path(params['MAIN_DIR']).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, params['exp_name'], folder_name, config.MODEL_IMGS_FOLDERNAME, params['eval_type'])
+    model_folder_epoch_patches = Path(model_folder_epoch_save).joinpath('patches')
+    model_folder_epoch_imgs = Path(model_folder_epoch_save).joinpath('imgs')
+    Path(model_folder_epoch_patches).mkdir(parents=True, exist_ok=True)
+    Path(model_folder_epoch_imgs).mkdir(parents=True, exist_ok=True)
+
+    return model_folder_epoch_patches, model_folder_epoch_imgs
+
+def eval_3D_finalize(patient_img, patient_gt, patient_pred
+                        , patient_id_curr
+                        , model_folder_epoch_imgs, model_folder_epoch_patches 
+                        , spacing
+                        , show=False, save=False):
+
+    # Step 3.1.2 - Vizualize
+    if show:
+        pass
+
+    # Step 3.1.3 - Save 3D grid to visualize in 3D Slicer (drag-and-drop mechanism)
+    if save:
+        import medloader.dataloader.utils as medutils
+        medutils.write_nrrd(str(Path(model_folder_epoch_patches).joinpath('nrrd_' + patient_id_curr)) + '_img.nrrd' , patient_img[:,:,:,0], spacing)
+        medutils.write_nrrd(str(Path(model_folder_epoch_patches).joinpath('nrrd_' + patient_id_curr)) + '_mask.nrrd', np.argmax(patient_gt, axis=3),spacing)
+        medutils.write_nrrd(str(Path(model_folder_epoch_patches).joinpath('nrrd_' + patient_id_curr)) + '_maskpred.nrrd', np.argmax(patient_pred, axis=3),spacing)
+
+def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
+    
+    try:
+
+        # Step 0.1 - Extract params
+        eval_type = params['eval_type']
+        epoch = params['epoch']
+        batch_size = params['batch_size']
+        
+        # Step 0.2 - Init results array
+        loss_list = []
+        loss_labels_list = []
+        patient_grid_count = {}
+        if verbose: print (''); print (' --------------------- eval_3D({}) ---------------------'.format(eval_type))
+
+        # Step 0.3 - Init temp variables
+        patient_id_curr = None
+        w_grid, h_grid, d_grid = None, None, None
+        meta1_batch = None
+        patient_gt = None
+        patient_img = None
+        patient_pred_overlap = None
+        patient_pred_vals = None
+        model_folder_epoch_patches = None
+        model_folder_epoch_imgs = None
+        if save:
+            model_folder_epoch_patches, model_folder_epoch_imgs = eval_3D_create_folder(epoch, params)
+
+        # Step 0.4 - Debug vars
+        filename = Path(__file__).parts[-1]
+        t0, t99 = None, None
+
+        # Step 1 - Loop over dataset_eval (which provides patients & grids in an ordered manner)
+        pbar_desc_prefix = 'Eval3D_{}'.format(eval_type)
+        with tqdm.tqdm(total=len(dataset_eval), desc=pbar_desc_prefix, leave=False) as pbar_eval:
+            for (X,Y,meta1,meta2) in dataset_eval.generator().batch(batch_size):
+                y_predict = model(X, training=False) # training=False sets dropout rate to 0.0 
+                for batch_id in range(X.shape[0]):
+
+                    # Step 2 - Get grid info
+                    patient_id_running = meta2[batch_id].numpy().decode('utf-8')
+                    if patient_id_running in patient_grid_count: patient_grid_count[patient_id_running] += 1
+                    else: patient_grid_count[patient_id_running] = 1
+
+                    meta1_batch = meta1[batch_id].numpy()
+                    w_start, h_start, d_start = meta1_batch[1], meta1_batch[2], meta1_batch[3]
+                    
+                    # Step 3 - Check if its a new patient
+                    if patient_id_running != patient_id_curr:
+
+                        # Step 3.1 - Sort out old patient (patient_id_curr)
+                        if patient_id_curr != None:
+                            
+                            # TESTING
+                            # import matplotlib.pyplot as plt
+                            # f, axarr = plt.subplots(1,3)
+                            # axarr[0].imshow(patient_pred_overlap[:,:,0])
+                            # axarr[1].imshow(patient_pred_overlap[:,:,40])
+                            # axarr[2].imshow(patient_pred_overlap[:,:,76])
+                            # plt.show()
+                            # pdb.set_trace()
+
+                            # Step 3.1.1 - Get stitched patient grid
+                            if verbose: t0 = time.time()
+                            patient_pred_overlap = np.expand_dims(patient_pred_overlap, -1)
+                            patient_pred = patient_pred_vals/patient_pred_overlap
+                            del patient_pred_vals
+                            del patient_pred_overlap
+                            gc.collect()
+                            if verbose: print (' - [eval_3D()] Post-Process time: ', time.time() - t0,'s')
+
+                            # Step 3.1.2 - Save/Visualize
+                            if verbose: t0 = time.time()
+                            spacing = np.array([meta1_batch[4], meta1_batch[5], meta1_batch[6]])/100.0
+                            eval_3D_finalize(patient_img, patient_gt, patient_pred
+                                , patient_id_curr
+                                , model_folder_epoch_imgs, model_folder_epoch_patches 
+                                , spacing
+                                , show=show, save=save)
+                            if verbose: print (' - [eval_3D()] Save as .nrrd time: ', time.time() - t0,'s')
+                            
+                            # Step 3.1.3 - Loss Calculation
+                            if verbose: t0 = time.time()
+                            loss_avg_val, loss_labels_val = losses.loss_dice_numpy(patient_gt, patient_pred)
+                            if loss_avg_val != -1 and len(loss_labels_val):
+                                loss_list.append(loss_avg_val)
+                                loss_labels_list.append(loss_labels_val)
+                            else:
+                                print (' - [ERROR][eval_3D()] patient_id: ', patient_id_curr)
+                            if verbose: print (' - [eval_3D()] Loss calculation time: ', time.time() - t0,'s')
+                            if verbose: print (' - [eval_3D()] Total patient time: ', time.time() - t99,'s')
+                            
+                        # Step 3.2 - Create variables for new patient
+                        if verbose: t99 = time.time()
+                        patient_id_curr = patient_id_running
+                        patient_scan_size = meta1_batch[7:10]
+                        dataset_name = patient_id_curr.split('-')[0]
+                        dataset_this = dataset_eval.get_subdataset(param_name=dataset_name)
+                        w_grid, h_grid, d_grid = dataset_this.w_grid, dataset_this.h_grid, dataset_this.d_grid
+                        patient_pred_size = list(patient_scan_size) + [len(dataset_this.LABEL_MAP)]
+                        patient_pred_overlap = np.zeros(patient_scan_size, dtype=np.uint8)
+                        patient_pred_vals = np.zeros(patient_pred_size, dtype=np.float32)
+                        patient_gt = np.zeros(patient_pred_size, dtype=np.float32)
+                        if save:
+                            patient_img = np.zeros(list(patient_scan_size) + [1], dtype=np.int16)
+
+                    # Step 4 - If not new patient anymore, fill up data
+                    patient_pred_vals[w_start:w_start + w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] += y_predict[batch_id]
+                    patient_pred_overlap[w_start:w_start + w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] += np.ones(y_predict[batch_id].shape[:-1], dtype=np.uint8)
+                    patient_gt[w_start:w_start+w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] = Y[batch_id]
+                    if save:
+                        data_vol = X[batch_id]*(medconfig.HU_MAX - medconfig.HU_MIN) + medconfig.HU_MIN
+                        patient_img[w_start:w_start+w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] = data_vol
+        
+                pbar_eval.update(batch_size)
+
+        # Step 3 - For last patient
+        # Step 3.1.1 - Get stitched patient grid
+        if verbose: t0 = time.time()
+        patient_pred_overlap = np.expand_dims(patient_pred_overlap, -1)
+        patient_pred = patient_pred_vals/patient_pred_overlap
+        del patient_pred_vals
+        del patient_pred_overlap
+        gc.collect()
+        if verbose: print (' - [eval_3D()] Post-Process time: ', time.time() - t0,'s')
+
+        # Step 3.1.2 - Save/Visualize
+        if verbose: t0 = time.time()
+        spacing = np.array([meta1_batch[4], meta1_batch[5], meta1_batch[6]])/100.0
+        eval_3D_finalize(patient_img, patient_gt, patient_pred
+            , patient_id_curr
+            , model_folder_epoch_imgs, model_folder_epoch_patches 
+            , spacing
+            , show=show, save=save)
+        if verbose: print (' - [eval_3D()] Save as .nrrd time: ', time.time() - t0,'s')
+        
+        # Step 3.1.3 - Loss Calculation
+        if verbose: t0 = time.time()
+        loss_avg_val, loss_labels_val = losses.loss_dice_numpy(patient_gt, patient_pred)
+        if loss_avg_val != -1 and len(loss_labels_val):
+            loss_list.append(loss_avg_val)
+            loss_labels_list.append(loss_labels_val)
+        else:
+            print (' - [ERROR][eval_3D()] patient_id: ', patient_id_curr)
+        if verbose: print (' - [eval_3D()] Loss calculation time: ', time.time() - t0,'s')
+        if verbose: print (' - [eval_3D()] Total patient time: ', time.time() - t99,'s')
+
+        # Step 5 - Summarize
+        loss_labels_avg = []
+        loss_labels_list = np.array(loss_labels_list)
+        for label_id in range(loss_labels_list.shape[1]): 
+            tmp_vals = loss_labels_list[:,label_id]
+            loss_labels_avg.append(np.mean(tmp_vals[tmp_vals > 0]))
+        
+        loss_avg = np.mean(loss_list)
+        print (' - eval_type: ', eval_type)
+        print (' - loss_labels_3D: ', ['%.4f' % each for each in loss_labels_avg])
+        print (' - loss_3D: %.4f' % loss_avg)
+        print (' - loss_3D (w/o bgd): %.4f' %  np.mean(loss_labels_avg[1:]))
+
+        return loss_avg, {i:loss_labels_avg[i] for i in range(len(loss_labels_avg))}
+
+    except:
+        traceback.print_exc()
+        pdb.set_trace()
+        return -1, {} 
+

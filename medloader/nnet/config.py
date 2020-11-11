@@ -10,6 +10,7 @@ os.environ["TF_GPU_THREAD_MODE"] = "gpu_private" # to avoid large "Kernel Launch
 MODEL_ATTENTIONUNET3D = 'AttentionUnet3D'
 MODEL_UNET3D = 'UNet3D'
 MODEL_UNET3DSMALL = 'UNet3DSmall'
+MODEL_UNET3DSHALLOW = 'UNet3DShallow'
 
 OPTIMIZER_ADAM = 'Adam'
 

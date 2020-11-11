@@ -63,6 +63,8 @@ class Trainer:
         self.dataset_train_eval = utils.get_dataloader_3D_train_eval(data_dir, resampled=resampled, single_sample=single_sample)
         self.dataset_test_eval = utils.get_dataloader_3D_test_eval(data_dir, resampled=resampled, single_sample=single_sample)
 
+        self.label_map = self.dataset_train.get_label_map()
+
     def set_model(self):
 
         # Step 1 - Get class ids
@@ -72,11 +74,13 @@ class Trainer:
 
         # Step 2 - Get model arch
         if self.params['model']['name'] == config.MODEL_UNET3D:
-            self.model = models.ModelUNet3D(class_count=class_count, trainable=True, activation='sigmoid')
+            self.model = models.ModelUNet3D(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
+        elif self.params['model']['name'] == config.MODEL_UNET3DSHALLOW:
+            self.model = models.ModelUNet3DShallow(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
         elif self.params['model']['name'] == config.MODEL_UNET3DSMALL:
-            self.model = models.ModelUNet3DSmall(class_count=class_count, trainable=True)
+            self.model = models.ModelUNet3DSmall(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
         elif self.params['model']['name'] == config.MODEL_ATTENTIONUNET3D:
-            self.model = models.AttentionUnet3D(class_count=class_count, trainable=True)
+            self.model = models.AttentionUnet3D(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
         
         # Step 3 - Get optimizer
         if self.params['model']['optimizer'] == config.OPTIMIZER_ADAM:
@@ -92,7 +96,7 @@ class Trainer:
             print ('')
             print (' - [Trainer] Loading model from epoch={} and training till epoch={}'.format(load_epoch, epochs))
 
-            utils.load_model(self.params['exp_name'], self.model, load_epoch, {'optimizer':self.optimizer}, load_type=self.mode_train)
+            utils.load_model(self.params['exp_name'], self.model, load_epoch, {'optimizer':self.optimizer, 'MAIN_DIR': self.params['MAIN_DIR']}, load_type=self.mode_train)
             print (' - [train.py][train()] Model Loaded at epoch-{} !'.format(load_epoch))
 
     def set_metrics(self):
@@ -106,13 +110,15 @@ class Trainer:
         print (' - Loss: ', self.params['metrics']['metrics_loss'])
         print (' - Eval: ', self.params['metrics']['metrics_eval'])
         print (' - Model: ', str(self.model))
-        print (' -- TBoard Arch: ', self.params['model']['tboard_arch'])
+        print (' -- Activation: ', self.params['model']['activation'])
         print (' -- Kernel Reg: ', self.params['model']['kernel_reg'])
+        print (' -- TBoard Arch: ', self.params['model']['tboard_arch'])
+        
         print ('')
         print (' - Batch Size: ', self.params['dataloader']['batch_size'])
         print ('')
-        print (' - Eval3D every {} epochs: '.format(self.params['model']['epochs_eval']))
-        print (' - Viz3D every {} epochs: '.format(self.params['model']['epochs_viz']))
+        print (' - Eval3D: every {} epochs '.format(self.params['model']['epochs_eval']))
+        print (' - Viz3D: every {} epochs '.format(self.params['model']['epochs_viz']))
         print ('')
         print (' - OS-PID: ', os.getpid())
         print (' - TFlow Profiler: ', self.params['model']['profile'])
@@ -131,6 +137,7 @@ class Trainer:
         exp_name = self.params['exp_name']
 
         metrics_loss = self.params['metrics']['metrics_loss']
+        metrics_eval = self.params['metrics']['metrics_eval']
         loss_weighted = self.params['metrics']['loss_weighted']
         
         epochs_save = self.params['model']['epochs_save']
@@ -141,7 +148,8 @@ class Trainer:
 
         # VARS
         trainMetrics = self.metrics[self.mode_train]
-
+        params_save_model = {'optimizer':self.optimizer, 'MAIN_DIR': self.params['MAIN_DIR']}
+        
         for epoch in self.epoch_range:
 
             try:
@@ -232,13 +240,61 @@ class Trainer:
 
                     # Step 5.2 - Model save
                     if epoch % epochs_save == 0:
-                        utils.save_model(exp_name, self.model, epoch, {'optimizer':self.optimizer})
+                        utils.save_model(exp_name, self.model, epoch, params_save_model)
                     
-                    # Step 5.3 - Train Epochs summary
-                    trainMetrics.write_epoch_summary(epoch, {'optimizer':self.optimizer})
+                    # Step 5.3 - Eval on full 3D
+                    if epoch % epochs_eval == 0:
+                        self.params['epoch'] = epoch
+                        save=False
+                        if epoch > 0 and epoch % epochs_viz == 0:
+                            save=True
+
+                        for metric_str in metrics_eval:
+                            if metrics_eval[metric_str] in [config.LOSS_DICE]:
+                                params_eval = {'eval_type': self.mode_train, 'epoch':epoch, 'batch_size': batch_size, 'exp_name': exp_name, 'MAIN_DIR': self.params['MAIN_DIR']}
+                                eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_train_eval, params_eval, save=save)
+                                trainMetrics.update_metric_eval_labels(metric_str, eval_labels_avg, do_average=True)
+                    
+                    # Step 5.4 - Test
+                    if epoch % epochs_eval == 0:
+                        self.test()
+
+                    # Step 5.5 - Epochs summary
+                    eval_condition = epoch % epochs_eval == 0
+                    trainMetrics.write_epoch_summary(epoch, self.label_map, {'optimizer':self.optimizer}, eval_condition)
                     
                     
             except:
-                utils.save_model(exp_name, self.model, epoch, {'optimizer':self.optimizer, 'MAIN_DIR': self.params['MAIN_DIR']})
+                utils.save_model(exp_name, self.model, epoch, params_save_model)
                 traceback.print_exc()
                 pdb.set_trace()
+
+    def test(self):
+
+        try:
+
+            # Step 1.1 - Params
+            exp_name = self.params['exp_name']
+            epoch = self.params['epoch']
+            metrics_eval = self.params['metrics']['metrics_eval']
+            epochs_viz = self.params['model']['epochs_viz']
+            batch_size = self.params['dataloader']['batch_size']
+
+            testMetrics = self.metrics[self.mode_test]
+            testMetrics.reset_metrics(self.params)
+                
+            # Step 2 - Eval on full 3D
+            save=False
+            if epoch > 0 and epoch % epochs_viz == 0:
+                save=True
+            for metric_str in metrics_eval:
+                if metrics_eval[metric_str] in [config.LOSS_DICE]:
+                    params_eval = {'eval_type': self.mode_test, 'epoch':epoch, 'batch_size': batch_size, 'exp_name': exp_name, 'MAIN_DIR': self.params['MAIN_DIR']}
+                    eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_test_eval, params_eval, save=save)
+                    testMetrics.update_metric_eval_labels(metric_str, eval_labels_avg, do_average=True)
+
+            testMetrics.write_epoch_summary(epoch, self.label_map, {}, True)
+
+        except:
+            traceback.print_exc()
+            pdb.set_trace()

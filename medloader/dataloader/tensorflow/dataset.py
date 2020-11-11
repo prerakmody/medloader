@@ -32,3 +32,6 @@ class ZipDataset:
             print (' - [ERROR][ZipDataset] param_name needs to a str')
         
         return None 
+    
+    def get_label_map(self):
+        return self.datasets[0].LABEL_MAP
