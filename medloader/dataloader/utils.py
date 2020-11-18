@@ -1,3 +1,4 @@
+import os
 import pdb
 import copy
 import time
@@ -879,14 +880,17 @@ def benchmark_model(model_time):
 
 def benchmark(dataset_generator, model_time=0.1):
 
+    import psutil
+    import humanize
+    process = psutil.Process(os.getpid())
     print (' - [benchmark()]')
     t0 = time.time()
-    for X,_,_,_ in dataset_generator:
+    for X,_,_,meta2 in dataset_generator:
         t1 = time.time()
         benchmark_model(model_time)
         t2 = time.time()
-        print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s', '(',X.shape,')')
-        # print (X.shape)
+        # print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s', '(',X.shape,'), (',meta2.numpy(),')')
+        print (' - Data Time: ', round(t1 - t0,5),'s || Model Time: ', round(t2-t1,2),'s', '(',humanize.naturalsize( process.memory_info().rss),'), (',meta2.numpy(),')')
         t0 = time.time()
 
 def benchmark_with_profiler(dataset_generator, model_time=0.1):

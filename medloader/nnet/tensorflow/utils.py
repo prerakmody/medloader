@@ -1,3 +1,4 @@
+import os
 import gc
 import pdb
 import time
@@ -20,42 +21,49 @@ import medloader.nnet.tensorflow.losses as losses
 #                     DATA RELATED                         #
 ############################################################
 
-def get_dataloader_3D_train(data_dir, resampled=False, single_sample=False):
-    
-    debug = False
+def get_dataloader_3D_train(data_dir, dir_type=['train']
+                    , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
+                    , transforms=[], filter_grid=True
+                    , parallel_calls=None, deterministic=False
+                    , patient_shuffle=True
+                    , debug=False, single_sample=False):
+
     datasets = []
-    
-    # Dataset 1
-    if 1:
-
+    for dir_type_ in dir_type:
         # Step 1 - Get dataset class
-        dir_type = 'train'
-        dataset_han_miccai2015 = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type
-                    , dimension=3, mask_type=medconfig.MASK_TYPE_ONEHOT, resampled=resampled
-                    , patient_shuffle=False
-                    , debug=debug, single_sample=single_sample)
+        dataset = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type_
+                        , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
+                        , transforms=transforms, filter_grid=filter_grid
+                        , parallel_calls=parallel_calls, deterministic=deterministic
+                        , patient_shuffle=patient_shuffle
+                        , debug=debug, single_sample=single_sample)
 
-        # Step 2 - Training transforms
-        x_shape_w = dataset_han_miccai2015.w_grid
-        x_shape_h = dataset_han_miccai2015.h_grid
-        x_shape_d = dataset_han_miccai2015.d_grid
+        # Step 2 - Transforms
+        x_shape_w = dataset.w_grid
+        x_shape_h = dataset.h_grid
+        x_shape_d = dataset.d_grid
         transforms = [
-                    aug.NormalizeMinMaxSampler(min_val=medconfig.HU_MIN, max_val=medconfig.HU_MAX, x_shape=(x_shape_h, x_shape_w, x_shape_d,1))
-                    , aug.Rotate3D()
-                ]
-        dataset_han_miccai2015.transforms = transforms 
+                aug.NormalizeMinMaxSampler(min_val=medconfig.HU_MIN, max_val=medconfig.HU_MAX, x_shape=(x_shape_h, x_shape_w, x_shape_d,1))
+                , aug.Rotate3D()
+            ]
+        dataset.transforms = transforms
 
-        # Step 3 - Training filters for background-only grids
-        dataset_han_miccai2015.filter = aug.FilterByMask(len(dataset_han_miccai2015.LABEL_MAP), dataset_han_miccai2015.SAMPLER_PERC).execute
+        # Step 3 - Filters (to eliminate/reduce background-only grids)
+        if filter_grid:
+            dataset.filter = aug.FilterByMask(len(dataset.LABEL_MAP), dataset.SAMPLER_PERC)
 
-        # Step 4 - Append to list
-        datasets.append(dataset_han_miccai2015)
+        datasets.append(dataset)
+
+    # Step 4- Return
+    return ZipDataset(datasets)
     
-    dataset = ZipDataset(datasets)
-    return dataset
-
-def get_dataloader_3D_train_eval(data_dir, resampled=False, single_sample=False, debug=False):
-
+def get_dataloader_3D_train_eval(data_dir, dir_type='train'
+                    , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
+                    , transforms=[], filter_grid=False
+                    , parallel_calls=None, deterministic=True
+                    , patient_shuffle=False
+                    , debug=False, single_sample=False):
+    
     datasets = []
     
     # Dataset 1
@@ -64,8 +72,10 @@ def get_dataloader_3D_train_eval(data_dir, resampled=False, single_sample=False,
         # Step 1 - Get dataset class
         dir_type = 'train'
         dataset_han_miccai2015 = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type
-                    , dimension=3, mask_type=medconfig.MASK_TYPE_ONEHOT, resampled=resampled
-                    , patient_shuffle=False
+                    , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
+                    , transforms=transforms, filter_grid=filter_grid
+                    , parallel_calls=parallel_calls, deterministic=deterministic
+                    , patient_shuffle=patient_shuffle
                     , debug=debug, single_sample=single_sample)
 
         # Step 2 - Training transforms
@@ -86,8 +96,13 @@ def get_dataloader_3D_train_eval(data_dir, resampled=False, single_sample=False,
     dataset = ZipDataset(datasets)
     return dataset
 
-def get_dataloader_3D_test_eval(data_dir, resampled=True, debug=False, single_sample=False):
-
+def get_dataloader_3D_test_eval(data_dir, dir_type='test_offsite'
+                    , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
+                    , transforms=[], filter_grid=False
+                    , parallel_calls=None, deterministic=True
+                    , patient_shuffle=False
+                    , debug=False, single_sample=False):
+                    
     datasets = []
 
     # Dataset 1
@@ -96,9 +111,11 @@ def get_dataloader_3D_test_eval(data_dir, resampled=True, debug=False, single_sa
         # Step 1 - Get dataset class
         dir_type = 'test_offsite'
         dataset_han_miccai2015 = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type
-                        , dimension=3, mask_type=medconfig.MASK_TYPE_ONEHOT, resampled=resampled
-                        , patient_shuffle=False
-                        , debug=debug, single_sample=single_sample)
+                    , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
+                    , transforms=transforms, filter_grid=filter_grid
+                    , parallel_calls=parallel_calls, deterministic=deterministic
+                    , patient_shuffle=patient_shuffle
+                    , debug=debug, single_sample=single_sample)
 
         # Step 2 - Testing transforms
         x_shape_w = dataset_han_miccai2015.w_grid
@@ -122,15 +139,17 @@ def get_dataloader_3D_test_eval(data_dir, resampled=True, debug=False, single_sa
 ############################################################
 #                    MODEL RELATED                         #
 ############################################################
-def save_model(exp_name, model, epoch, params):
+def save_model(model, params):
     """
      - Ref: https://www.tensorflow.org/api_docs/python/tf/train/Checkpoint
     """
     try:
-        import tensorflow as tf
+        PROJECT_DIR = params['PROJECT_DIR']
+        exp_name = params['exp_name']
+        epoch = params['epoch']
 
         folder_name = config.MODEL_CHKPOINT_NAME_FMT.format(epoch)
-        model_folder = Path(params['MAIN_DIR']).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, exp_name, folder_name)
+        model_folder = Path(PROJECT_DIR).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, exp_name, folder_name)
         model_folder.mkdir(parents=True, exist_ok=True)
         model_path = Path(model_folder).joinpath(folder_name)
         
@@ -148,21 +167,29 @@ def load_model(exp_name, model, epoch, params, load_type):
      - Ref: https://www.tensorflow.org/api_docs/python/tf/train/Checkpoint
     """
     try:
-        import tensorflow as tf
+        PROJECT_DIR = params['PROJECT_DIR']
+        exp_name = params['exp_name']
+        load_epoch = params['load_epoch']
 
-        folder_name = config.MODEL_CHKPOINT_NAME_FMT.format(epoch)
-        model_folder = Path(params['MAIN_DIR']).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, exp_name, folder_name)
+        folder_name = config.MODEL_CHKPOINT_NAME_FMT.format(load_epoch)
+        model_folder = Path(PROJECT_DIR).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, exp_name, folder_name)
         
-        if len(params):
-            optimizer = params['optimizer']
-            ckpt_obj = tf.train.Checkpoint(optimizer=optimizer, model=model)
-            if load_type == 'train':
+        if load_type == config.MODE_TRAIN:
+            if 'optimizer' in params:
+                ckpt_obj = tf.train.Checkpoint(optimizer=params['optimizer'], model=model)
                 ckpt_obj.restore(save_path=tf.train.latest_checkpoint(str(model_folder))).assert_existing_objects_matched()
                 # ckpt_obj.restore(save_path=tf.train.latest_checkpoint(str(model_folder))).assert_consumed()
-            elif load_type in ['test', 'val']:
-                ckpt_obj.restore(save_path=tf.train.latest_checkpoint(str(model_folder))).expect_partial()
+            else:
+                print (' - [ERROR][utils.load_model] Optimizer not passed !')
+                pdb.set_trace()
+
+        elif load_type in [config.MODE_VAL, config.MODE_TEST]:
+            ckpt_obj = tf.train.Checkpoint(model=model)
+            ckpt_obj.restore(save_path=tf.train.latest_checkpoint(str(model_folder))).expect_partial()
+
         else:
-            pass
+            print (' - [ERROR][utils.load_model] It should not be here!')
+            pdb.set_trace()
             # tf.keras.Model.load_weights
             # tf.train.list_variables(tf.train.latest_checkpoint(str(model_folder)))
 
@@ -229,6 +256,7 @@ def set_lr(epoch, optimizer):
     if epoch == 200:
         optimizer.lr.assign(0.0001)
 
+@tf.function
 def get_mask(mask, Y):
     mask = tf.expand_dims(tf.expand_dims(tf.expand_dims(mask, axis=1),axis=1),axis=1)
     mask = tf.tile(mask, multiples=[1,Y.shape[1],Y.shape[2],Y.shape[3],1])
@@ -351,20 +379,13 @@ class ModelMetrics():
         # Metrics for losses (during training for smaller grids)
         self.metrics_loss_obj[metric_str]['total'].update_state(metric_val)
     
-    def update_metric_loss_labels(self, metric_str, metric_vals_labels, do_average=False):
+    @tf.function
+    def update_metric_loss_labels(self, metric_str, metric_vals_labels):
         # Metrics for losses (during training for smaller grids)
 
-        metric_avg = []
         for label_id in self.label_ids:
             if metric_vals_labels[label_id] > 0:
                 self.metrics_loss_obj[metric_str][label_id].update_state(metric_vals_labels[label_id])
-                if do_average:
-                    if label_id > 0:
-                        metric_avg.append(metric_vals_labels[label_id])
-        
-        if do_average:
-            if len(metric_avg):
-                self.metrics_loss_obj[metric_str]['total'].update_state(np.mean(metric_avg))
 
     def update_metric_eval(self, metric_str, metric_val):
         # Metrics for eval (for full 3D volume)
@@ -421,7 +442,12 @@ class ModelMetrics():
         # Metrics for losses (during training for smaller grids)
         for metric_str in self.metrics_loss_obj:
             if len(desc_str): desc_str += ',' 
-            loss_text = '{}Loss:{:2f}'.format(metric_str, self.metrics_loss_obj[metric_str]['total'].result())
+
+            metric_avg = []
+            for label_id in self.label_ids:
+                if label_id > 0:
+                    metric_avg.append(self.metrics_loss_obj[metric_str][label_id].result().numpy())
+            loss_text = '{}Loss:{:2f}'.format(metric_str, np.mean(metric_avg))
             desc_str += loss_text
         
         pbar.set_description(desc=desc_str, refresh=True)
@@ -448,7 +474,7 @@ def get_info_from_label_id(label_id, label_map, label_colors=None):
 
 def eval_3D_create_folder(epoch, params):
     folder_name = config.MODEL_CHKPOINT_NAME_FMT.format(epoch)
-    model_folder_epoch_save = Path(params['MAIN_DIR']).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, params['exp_name'], folder_name, config.MODEL_IMGS_FOLDERNAME, params['eval_type'])
+    model_folder_epoch_save = Path(params['PROJECT_DIR']).joinpath(config.MODEL_CHKPOINT_MAINFOLDER, params['exp_name'], folder_name, config.MODEL_IMGS_FOLDERNAME, params['eval_type'])
     model_folder_epoch_patches = Path(model_folder_epoch_save).joinpath('patches')
     model_folder_epoch_imgs = Path(model_folder_epoch_save).joinpath('imgs')
     Path(model_folder_epoch_patches).mkdir(parents=True, exist_ok=True)
@@ -478,9 +504,13 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
     try:
 
         # Step 0.1 - Extract params
+        exp_name = params['exp_name']
+        PROJECT_DIR = params['PROJECT_DIR']
         eval_type = params['eval_type']
-        epoch = params['epoch']
+
         batch_size = params['batch_size']
+        batch_size = 2
+        epoch = params['epoch']
         
         # Step 0.2 - Init results array
         loss_list = []
@@ -504,6 +534,9 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
         # Step 0.4 - Debug vars
         filename = Path(__file__).parts[-1]
         t0, t99 = None, None
+        import psutil
+        import humanize
+        process = psutil.Process(os.getpid())
 
         # Step 1 - Loop over dataset_eval (which provides patients & grids in an ordered manner)
         pbar_desc_prefix = 'Eval3D_{}'.format(eval_type)
@@ -588,6 +621,8 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
                         patient_img[w_start:w_start+w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] = data_vol
         
                 pbar_eval.update(batch_size)
+                memory = pbar_desc_prefix + '[' + humanize.naturalsize(process.memory_info().rss) + ']'
+                pbar_eval.set_description(desc=memory, refresh=True)
 
         # Step 3 - For last patient
         # Step 3.1.1 - Get stitched patient grid
@@ -640,3 +675,10 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
         pdb.set_trace()
         return -1, {} 
 
+############################################################
+#                      DEBUG RELATED                       #
+############################################################
+def print_exp_name(exp_name, epoch):
+    print ('')
+    print (' [ERROR] ========================= {}(epoch={}) ========================='.format(exp_name, epoch))
+    print ('')

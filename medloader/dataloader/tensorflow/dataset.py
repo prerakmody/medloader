@@ -10,8 +10,6 @@ class ZipDataset:
     def __init__(self, datasets):
         self.datasets = datasets
         self.datasets_generators = []
-        for dataset in self.datasets:
-            self.datasets_generators.append(dataset.generator())
     
     def __len__(self):
         length = 0
@@ -21,6 +19,8 @@ class ZipDataset:
         return length
 
     def generator(self):
+        for dataset in self.datasets:
+            self.datasets_generators.append(dataset.generator())
         return tf.data.experimental.sample_from_datasets(self.datasets_generators) #<_DirectedInterleaveDataset shapes: (<unknown>, <unknown>, <unknown>, <unknown>), types: (tf.float32, tf.float32, tf.int16, tf.string)>
 
     def get_subdataset(self, param_name):

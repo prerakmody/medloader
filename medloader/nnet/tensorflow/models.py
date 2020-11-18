@@ -237,8 +237,6 @@ class ModelUNet3DShallow(tf.keras.Model):
             traceback.print_exc()
             pdb.set_trace()
 
-
-
 class AttentionBlock3D(tf.keras.Model):
 
     def __init__(self, filters, kernel_size=(1,1,1), strides=(1,1,1), padding='same', trainable=False, name=''):
