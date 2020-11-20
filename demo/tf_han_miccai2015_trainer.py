@@ -28,9 +28,9 @@ params = {
         , 'kernel_reg': False
         , 'optimizer': config.OPTIMIZER_ADAM
         , 'init_lr': 0.005
-        , 'epochs':  2 # 1000
-        , 'epochs_save': 1# 20
-        , 'epochs_eval': 1 #40
+        , 'epochs':  1000
+        , 'epochs_save': 20
+        , 'epochs_eval': 40
         , 'epochs_viz': 300
         , 'load_model': {'load': False, 'load_epoch':-1}
         , 'model_tboard': False
