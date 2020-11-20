@@ -18,13 +18,18 @@ This repository contains code for downloading, sorting, extracting (to [.mha i.e
         - `conda develop .`
             - Adds medloader as a python pacakge on your local machine
 4. To download/sort/extract the MICCAI 2015 dataset
-    - Keep `medloader.dataloader.config.VOXEL_RESO` as an empty tuple `=()` if you dont want to resmaple
+    - Keep [medloader.dataloader.config.VOXEL_RESO](./medloader/dataloader/config.py) as an empty tuple `=()` if you dont want to resmaple
         - Time consuming step (_but it is recommended that all 3D volumes have the same pixel spacing_)
-    - `python demo/tf_han_miccai2015_trainer.py`
+    - `python` [demo/tf_han_miccai2015_loader.py](./demo/tf_han_miccai2015_loader.py)
         - This shall create a `./_data/HaN_MICCAI2015` directory with `raw/` and `processed/` data files for each patient
-        - If `medloader.dataloader.config.VOXEL_RESO` is kept empty, then also set the `resampled` flag to `False` in `demo.tf_han_miccai2015_trainer.params.dataloader`
+        - If [medloader.dataloader.config.VOXEL_RESO](./medloader/dataloader/config.py) is kept empty, then also set the `resampled` flag to `False` in [demo.tf_han_miccai2015_trainer.params.dataloader](./demo/tf_han_miccai2015_trainer.py)
     - Note
         - You may want to remove patient-id=`0522c0125` due to its small dimensions in the z-axis
+            - If medloader.dataloader.config.HaN_MICCAI2015['GRID_3D']['SIZE'] = [96,96,96] 
+                - Remove it from _data/HaN_MICCAI2015/processed/train/data_3D/{*.csv}
+5. To train a model
+    - Run `python` [demo/tf_han_miccai2015_trainer.py](./demo/tf_han_miccai2015_trainer.py)
+        - You can change the params within that file if need be
 
 ## CleanUp
 1. Remove conda env

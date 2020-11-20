@@ -1,3 +1,4 @@
+from medloader.demo.tf_han_miccai2015_trainer import PROJECT_DIR
 import pdb
 from pathlib import Path
 
@@ -7,8 +8,8 @@ import medloader.dataloader.utils_viz as utils_viz
 import medloader.dataloader.tensorflow.augmentations as aug
 from medloader.dataloader.tensorflow.dataset import ZipDataset
 
-MAIN_DIR = Path(__file__).parent.absolute().parent.absolute()
-data_dir = Path(MAIN_DIR).joinpath('_data')
+PROJECT_DIR = Path(__file__).parent.absolute().parent.absolute()
+data_dir = Path(PROJECT_DIR).joinpath('_data')
 
 def get_dataset_han_miccai2015_3D_grid(data_dir, dir_type=['train']
                     , dimension=3, grid=True, resampled=True, mask_type=config.MASK_TYPE_ONEHOT
@@ -79,11 +80,15 @@ def get_dataset_han_miccai2015_3D_full(data_dir, dir_type='train'
     # Step 3 - Return
     return ZipDataset([dataset])
 
+if 1:
+    dataset3D = get_dataset_han_miccai2015_3D_full(data_dir=data_dir, dir_type=['train']
+                                                , mask_type=config.MASK_TYPE_COMBINED, resampled=False
+                                                , transforms=False)
 
 # # 1. Main - full volume extractor (for viewing purposes)
 if 0:
     batchsize = 1
-    dataset3D = get_dataset_han_miccai2015_3D_full(data_dir=data_dir, dir_type='train'
+    dataset3D = get_dataset_han_miccai2015_3D_full(data_dir=data_dir, dir_type=['train']
                                                 , mask_type=config.MASK_TYPE_COMBINED, resampled=False
                                                 , transforms=False)
 
@@ -97,7 +102,7 @@ if 0:
 # # 2. Main - grid extractor (for ML purposes - a Tensorflow loader)
 if 0:
     batchsize = 1
-    dataset3D = get_dataset_han_miccai2015_3D_grid(data_dir=data_dir, dir_type='train'
+    dataset3D = get_dataset_han_miccai2015_3D_grid(data_dir=data_dir, dir_type=['train']
                                                 , mask_type=config.MASK_TYPE_ONEHOT, resampled=True
                                                 , filter=True)
 
@@ -105,13 +110,13 @@ if 0:
         for (X,Y,meta1,meta2) in dataset3D.generator().batch(batchsize):
             if X.shape != (1,96,96,96,1) and Y.shape != (1,96,96,96,10):
                 print (X.shape, Y.shape, meta1.numpy())
-                pbd.set_trace()
+                pdb.set_trace()
     except:
         import traceback
         traceback.print_exc()
 
 # # 3. Main - grid extractor (for ML benchmarking purposes)
-if 1:
+if 0:
     import medloader.dataloader.utils as utils
 
     batchsize = 2
@@ -123,7 +128,6 @@ if 1:
                                                 , single_sample=True)
     print (' ---------------- ')
     utils.benchmark(dataset3D.generator().batch(batchsize).prefetch(5), model_time=0.1)
-
 
 # # 4. Main - grid extractor (for viewing purposes)
 if 0:
