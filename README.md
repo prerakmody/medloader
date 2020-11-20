@@ -30,6 +30,9 @@ This repository contains code for downloading, sorting, extracting (to [.mha i.e
 5. To train a model
     - Run `python` [demo/tf_han_miccai2015_trainer.py](./demo/tf_han_miccai2015_trainer.py)
         - You can change the params within that file if need be
+    - Note: 
+        - To enable [demo.tf_han_miccai2015_trainer.params.model.profiler](./demo.tf_han_miccai2015_trainer.py)
+            - To run training script without sudo: [Instrutions by Nvidia](https://developer.nvidia.com/nvidia-development-tools-solutions-err_nvgpuctrperm-permission-issue-performance-counters#SolnAdminTag)
 
 ## CleanUp
 1. Remove conda env
