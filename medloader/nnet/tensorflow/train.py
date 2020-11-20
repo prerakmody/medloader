@@ -1,3 +1,9 @@
+# Import internal libraries
+import medloader.nnet.config as config
+import medloader.nnet.tensorflow.utils as utils
+import medloader.nnet.tensorflow.models as models
+
+# Import external libraries
 import os
 import sys
 import gc
@@ -10,13 +16,6 @@ import traceback
 import numpy as np
 import tensorflow as tf
 from pathlib import Path
-
-if len(tf.config.list_physical_devices('GPU')):
-    tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
-
-import medloader.nnet.config as config
-import medloader.nnet.tensorflow.utils as utils
-import medloader.nnet.tensorflow.models as models
 
 
 class Trainer:
@@ -88,7 +87,8 @@ class Trainer:
         print ('')
         print (' DEVOPS ')
         print (' ------ ')
-        print (' - OS-PID: ', os.getpid())
+        self.pid = os.getpid()
+        print (' - OS-PID: ', self.pid)
 
         print ('')
 
@@ -101,16 +101,30 @@ class Trainer:
         dir_type = self.params['dataloader']['dir_type']
         resampled = self.params['dataloader']['resampled']
         single_sample = self.params['dataloader']['single_sample']
+        batch_size = self.params['dataloader']['batch_size']
+        prefetch_batch = self.params['dataloader']['prefetch_batch']
+        parallel_calls = self.params['dataloader']['parallel_calls']
 
+        # Datasets
         self.dataset_train = utils.get_dataloader_3D_train(data_dir, dir_type=dir_type
-                                        , resampled=resampled, single_sample=single_sample)
-        self.label_map = self.dataset_train.get_label_map()
+                                , resampled=resampled, single_sample=single_sample
+                                , parallel_calls=parallel_calls)
+        self.dataset_train_eval = utils.get_dataloader_3D_train_eval(data_dir, resampled=resampled, single_sample=single_sample)
+        self.dataset_test_eval = utils.get_dataloader_3D_test_eval(data_dir, resampled=resampled, single_sample=single_sample)
+
+        # Get labels Ids
+        self.label_map = dict(self.dataset_train.get_label_map())
+        self.label_ids = self.label_map.values()
+        self.params['label_ids'] = self.label_ids # for use in Metrics
+        
+        # Generators
+        self.dataset_train_gen = self.dataset_train.generator().batch(batch_size).prefetch(prefetch_batch)
+        self.dataset_train_eval_gen = self.dataset_train_eval.generator().batch(batch_size).prefetch(prefetch_batch)
+        self.dataset_test_eval_gen = self.dataset_test_eval.generator().batch(batch_size).prefetch(prefetch_batch)
 
     def _set_model(self):
 
         # Step 1 - Get class ids
-        self.label_ids = self.dataset_train.datasets[0].LABEL_MAP.values()
-        self.params['label_ids'] = self.label_ids
         class_count = len(self.label_ids)
 
         # Step 2 - Get model arch
@@ -135,12 +149,12 @@ class Trainer:
             load_epoch = self.params['model']['load_model']['load_epoch']
             self.epoch_range = range(load_epoch+1, epochs)
             print ('')
-            print (' - [Trainer] Loading model from epoch={} and training till epoch={}'.format(load_epoch, epochs))
+            print (' - [Trainer][_set_model()] Loading model from epoch={} and training till epoch={}'.format(load_epoch, epochs))
 
             load_model_params = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': self.params['exp_name'], 'load_epoch': load_epoch
                                 , 'optimizer':self.optimizer}
             utils.load_model(self.model, load_type=config.MODE_TRAIN, params=load_model_params)
-            print (' - [train.py][train()] Model Loaded at epoch-{} !'.format(load_epoch))
+            print (' - [Trainer][_set_model()] Model Loaded at epoch-{} !'.format(load_epoch))
 
     def _set_metrics(self):
         self.metrics = {}
@@ -163,9 +177,15 @@ class Trainer:
                     print ('')
 
     @tf.function
-    def _train_loss(self, Y, y_predict, meta1, metrics_loss, loss_weighted, trainMetrics, label_ids):
+    def _train_loss(self, Y, y_predict, meta1):
+        
+        trainMetrics = self.metrics[config.MODE_TRAIN]
+        metrics_loss = self.params['metrics']['metrics_loss']
+        loss_weighted = self.params['metrics']['loss_weighted']
+        label_ids = self.label_ids
 
         loss_vals = tf.constant(0.0, dtype=tf.float32)
+
         for metric_str in metrics_loss:
             mask = utils.get_mask(meta1[:,-len(label_ids):], Y)
 
@@ -184,16 +204,20 @@ class Trainer:
         return loss_vals
 
     @tf.function
-    def _train_step(self, model, optimizer, X, Y, meta1, metrics_loss, loss_weighted, trainMetrics, label_ids):
+    def _train_step(self, X, Y, meta1):
 
         try:
+
+            model = self.model
+            optimizer = self.optimizer
+
             # Step 1 - Calculate loss and gradients
             with tf.GradientTape() as tape:
                 t2 = tf.timestamp()
                 y_predict = model(X, training=True)
                 t2_ = tf.timestamp()
 
-                loss_vals = self._train_loss(Y, y_predict, meta1, metrics_loss, loss_weighted, trainMetrics, label_ids)
+                loss_vals = self._train_loss(Y, y_predict, meta1)
 
             # tf.print(' - loss_Vals: ', loss_vals)
             t3 = tf.timestamp()
@@ -213,26 +237,18 @@ class Trainer:
         # PARAMS
         exp_name = self.params['exp_name']
 
-        data_dir = self.params['dataloader']['data_dir']
-        dir_type = self.params['dataloader']['dir_type']
         batch_size = self.params['dataloader']['batch_size']
-        resampled = self.params['dataloader']['resampled']
-        single_sample = self.params['dataloader']['single_sample']
-        parallel_calls = self.params['dataloader']['parallel_calls']
-        prefetch_batch = self.params['dataloader']['prefetch_batch']
-
+        
         epochs_save = self.params['model']['epochs_save']
         epochs_viz = self.params['model']['epochs_viz']
         epochs_eval = self.params['model']['epochs_eval']
 
-        metrics_loss = self.params['metrics']['metrics_loss']
         metrics_eval = self.params['metrics']['metrics_eval']
-        loss_weighted = self.params['metrics']['loss_weighted']
         
         # VARS
         trainMetrics = self.metrics[config.MODE_TRAIN]
         params_save_model = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': exp_name, 'optimizer':self.optimizer}
-        params_eval = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': exp_name
+        params_eval = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': exp_name, 'pid': self.pid
                             , 'eval_type': config.MODE_TRAIN, 'batch_size': batch_size}
         t_start_time = time.time()
         
@@ -248,15 +264,11 @@ class Trainer:
                 print ('')
                 print (' ================== EPOCH:{} (LR={:3f}) =================='.format(epoch, self.optimizer.lr.numpy()))
 
-                self.dataset_train = utils.get_dataloader_3D_train(data_dir, dir_type=dir_type
-                                        , resampled=resampled, single_sample=single_sample
-                                        , parallel_calls=parallel_calls)
-                dataset_train_gen = self.dataset_train.generator().batch(batch_size).prefetch(prefetch_batch)
                 epoch_step = 0
                 with tqdm.tqdm(total=len(self.dataset_train), desc='') as pbar:
 
                     t1 = time.time()
-                    for (X,Y,meta1,meta2) in dataset_train_gen:
+                    for (X,Y,meta1,meta2) in self.dataset_train_gen.repeat(1):
                         t1_ = time.time()
                         
                         # Model Writing to tensorboard
@@ -268,7 +280,7 @@ class Trainer:
                         self._set_profiler(epoch, epoch_step)
 
                         # Calculate loss and gradients from them
-                        time_predict, time_loss, time_backprop = self._train_step(self.model, self.optimizer, X, Y, meta1, metrics_loss, loss_weighted, trainMetrics, self.label_ids)
+                        time_predict, time_loss, time_backprop = self._train_step(X, Y, meta1)
 
                         # Update metrics (time + eval + plots)
                         time_dataloader = t1_ - t1
@@ -296,9 +308,8 @@ class Trainer:
 
                     for metric_str in metrics_eval:
                         if metrics_eval[metric_str] in [config.LOSS_DICE]:
-                            self.dataset_train_eval = utils.get_dataloader_3D_train_eval(data_dir, resampled=resampled, single_sample=single_sample)
                             params_eval['epoch'] = epoch
-                            eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_train_eval, params_eval, save=save)
+                            eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_train_eval, self.dataset_train_eval_gen, params_eval, save=save)
                             trainMetrics.update_metric_eval_labels(metric_str, eval_labels_avg, do_average=True)
                 
                 # Test
@@ -310,8 +321,13 @@ class Trainer:
                 eval_condition = epoch % epochs_eval == 0
                 trainMetrics.write_epoch_summary(epoch, self.label_map, {'optimizer':self.optimizer}, eval_condition)
                 if epoch > 0 and epoch % self.params['others']['epochs_timer'] == 0:
-                        elapsed_seconds =  time.time() - t_start_time
-                        print (' - Total time elapsed : {}'.format( str(datetime.timedelta(seconds=elapsed_seconds)) ))
+                    elapsed_seconds =  time.time() - t_start_time
+                    print (' - Total time elapsed : {}'.format( str(datetime.timedelta(seconds=elapsed_seconds)) ))
+                if epoch % 2 == 0:
+                    mem_before = utils.get_memory(self.pid)
+                    gc_n = gc.collect()
+                    mem_after = utils.get_memory(self.pid)
+                    print(' - Unreachable objects collected by GC: {} || ({}) -> ({})'.format(gc_n, mem_before, mem_after))
                     
             except:
                 utils.print_exp_name(exp_name + '-' + config.MODE_TEST, epoch)
@@ -340,7 +356,7 @@ class Trainer:
             # vars
             testMetrics = self.metrics[config.MODE_TEST]
             testMetrics.reset_metrics(self.params)
-            params_eval = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': exp_name
+            params_eval = {'PROJECT_DIR': self.params['PROJECT_DIR'], 'exp_name': exp_name, 'pid': self.pid
                             , 'eval_type': config.MODE_TEST, 'batch_size': batch_size
                             , 'epoch':epoch}
                 
@@ -350,9 +366,8 @@ class Trainer:
                 save=True
             for metric_str in metrics_eval:
                 if metrics_eval[metric_str] in [config.LOSS_DICE]:
-                    self.dataset_test_eval = utils.get_dataloader_3D_test_eval(data_dir, resampled=resampled, single_sample=single_sample)
-                    params_eval = {'eval_type': self.mode_test, 'epoch':epoch, 'batch_size': batch_size, 'exp_name': exp_name, 'MAIN_DIR': self.params['MAIN_DIR']}
-                    eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_test_eval, params_eval, save=save)
+                    dataset_test_eval = utils.get_dataloader_3D_test_eval(data_dir, resampled=resampled, single_sample=single_sample)
+                    eval_avg, eval_labels_avg = utils.eval_3D(self.model, self.dataset_test_eval, self.dataset_test_eval_gen, params_eval, save=save)
                     testMetrics.update_metric_eval_labels(metric_str, eval_labels_avg, do_average=True)
 
             testMetrics.write_epoch_summary(epoch, self.label_map, {}, True)

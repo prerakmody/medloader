@@ -4,6 +4,7 @@ models/
 _data/
 _models/
 logs/
+_logs/
 
 # PYTHON FOLDERS/FILES
 .pyc

@@ -11,16 +11,16 @@ PROJECT_DIR = Path(__file__).parent.absolute().parent.absolute()
 params = {
     'PROJECT_DIR': PROJECT_DIR
     , 'random_seed': 60
-    , 'exp_name': 'UNet3D_DoubleTrainv1_seed60'
+    , 'exp_name': 'UNet3D_seed60'
     , 'dataloader': {
         'data_dir': Path(PROJECT_DIR).joinpath('_data')
         , 'dir_type': [config.DATALOADER_MICCAI2015_TRAIN, config.DATALOADER_MICCAI2015_TRAIN_ADD]
         , 'name': config.DATALOADER_MICCAI2015
         , 'resampled': True
         , 'single_sample': False # [WATCH OUT!]
-        , 'batch_size': 2
-        , 'parallel_calls': 2
+        , 'batch_size': 4
         , 'prefetch_batch': 5
+        , 'parallel_calls': 2
     }
     , 'model':{
         'name': config.MODEL_UNET3D # [config.MODEL_UNET3D, config.MODEL_UNET3DSMALL, config.MODEL_UNET3DSHALLOW]
@@ -28,9 +28,9 @@ params = {
         , 'kernel_reg': False
         , 'optimizer': config.OPTIMIZER_ADAM
         , 'init_lr': 0.005
-        , 'epochs':  1000
-        , 'epochs_save': 20
-        , 'epochs_eval': 40
+        , 'epochs':  2 # 1000
+        , 'epochs_save': 1# 20
+        , 'epochs_eval': 1 #40
         , 'epochs_viz': 300
         , 'load_model': {'load': False, 'load_epoch':-1}
         , 'model_tboard': False
@@ -46,6 +46,9 @@ params = {
         , 'metrics_eval': {'Dice': config.LOSS_DICE}
         , 'loss_weighted': {'Dice': True}
         , 'loss_combo': []
+    }
+    , 'others': {
+        'epochs_timer': 10
     }
 }
 

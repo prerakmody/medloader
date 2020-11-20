@@ -3,6 +3,8 @@ import gc
 import pdb
 import time
 import tqdm
+import psutil
+import humanize
 import traceback
 import numpy as np
 from pathlib import Path
@@ -499,7 +501,7 @@ def eval_3D_finalize(patient_img, patient_gt, patient_pred
         medutils.write_nrrd(str(Path(model_folder_epoch_patches).joinpath('nrrd_' + patient_id_curr)) + '_mask.nrrd', np.argmax(patient_gt, axis=3),spacing)
         medutils.write_nrrd(str(Path(model_folder_epoch_patches).joinpath('nrrd_' + patient_id_curr)) + '_maskpred.nrrd', np.argmax(patient_pred, axis=3),spacing)
 
-def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
+def eval_3D(model, dataset_eval, dataset_eval_gen, params, show=False, save=False, verbose=False):
     
     try:
 
@@ -507,6 +509,7 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
         exp_name = params['exp_name']
         PROJECT_DIR = params['PROJECT_DIR']
         eval_type = params['eval_type']
+        pid = params['pid']
 
         batch_size = params['batch_size']
         batch_size = 2
@@ -534,14 +537,12 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
         # Step 0.4 - Debug vars
         filename = Path(__file__).parts[-1]
         t0, t99 = None, None
-        import psutil
-        import humanize
-        process = psutil.Process(os.getpid())
 
         # Step 1 - Loop over dataset_eval (which provides patients & grids in an ordered manner)
-        pbar_desc_prefix = 'Eval3D_{}'.format(eval_type)
+        print ('')
+        pbar_desc_prefix = 'Eval3D_{} [batch={}]'.format(eval_type, batch_size)
         with tqdm.tqdm(total=len(dataset_eval), desc=pbar_desc_prefix, leave=False) as pbar_eval:
-            for (X,Y,meta1,meta2) in dataset_eval.generator().batch(batch_size):
+            for (X,Y,meta1,meta2) in dataset_eval_gen.repeat(1):
                 y_predict = model(X, training=False) # training=False sets dropout rate to 0.0 
                 for batch_id in range(X.shape[0]):
 
@@ -621,7 +622,7 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
                         patient_img[w_start:w_start+w_grid, h_start:h_start+h_grid, d_start:d_start+d_grid] = data_vol
         
                 pbar_eval.update(batch_size)
-                memory = pbar_desc_prefix + '[' + humanize.naturalsize(process.memory_info().rss) + ']'
+                memory = pbar_desc_prefix + '[' + get_memory(pid) + ']'
                 pbar_eval.set_description(desc=memory, refresh=True)
 
         # Step 3 - For last patient
@@ -678,6 +679,13 @@ def eval_3D(model, dataset_eval, params, show=False, save=False, verbose=False):
 ############################################################
 #                      DEBUG RELATED                       #
 ############################################################
+def get_memory(pid):
+    try:
+        process = psutil.Process(pid)
+        return humanize.naturalsize(process.memory_info().rss)
+    except:
+        return '-1'
+
 def print_exp_name(exp_name, epoch):
     print ('')
     print (' [ERROR] ========================= {}(epoch={}) ========================='.format(exp_name, epoch))
