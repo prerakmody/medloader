@@ -258,13 +258,6 @@ def set_lr(epoch, optimizer):
     if epoch == 200:
         optimizer.lr.assign(0.0001)
 
-@tf.function
-def get_mask(mask, Y):
-    mask = tf.expand_dims(tf.expand_dims(tf.expand_dims(mask, axis=1),axis=1),axis=1)
-    mask = tf.tile(mask, multiples=[1,Y.shape[1],Y.shape[2],Y.shape[3],1])
-    mask = tf.cast(mask, tf.float32)
-    return mask
-
 class ModelMetrics():
     
     def __init__(self, metric_type, params):
@@ -512,7 +505,6 @@ def eval_3D(model, dataset_eval, dataset_eval_gen, params, show=False, save=Fals
         pid = params['pid']
 
         batch_size = params['batch_size']
-        batch_size = 2
         epoch = params['epoch']
         
         # Step 0.2 - Init results array

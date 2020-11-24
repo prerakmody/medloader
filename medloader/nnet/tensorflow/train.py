@@ -1,6 +1,7 @@
 # Import internal libraries
 import medloader.nnet.config as config
 import medloader.nnet.tensorflow.utils as utils
+import medloader.nnet.tensorflow.losses as losses
 import medloader.nnet.tensorflow.models as models
 
 # Import external libraries
@@ -187,7 +188,7 @@ class Trainer:
         loss_vals = tf.constant(0.0, dtype=tf.float32)
 
         for metric_str in metrics_loss:
-            mask = utils.get_mask(meta1[:,-len(label_ids):], Y)
+            mask = losses.get_mask(meta1[:,-len(label_ids):], Y)
 
             weighted = False
             if loss_weighted[metric_str]:
@@ -262,7 +263,7 @@ class Trainer:
 
                 # Pretty print
                 print ('')
-                print (' ================== EPOCH:{} (LR={:3f}) =================='.format(epoch, self.optimizer.lr.numpy()))
+                print (' ===== [{}] EPOCH:{} (LR={:3f}) =================='.format(exp_name, epoch, self.optimizer.lr.numpy()))
 
                 epoch_step = 0
                 with tqdm.tqdm(total=len(self.dataset_train), desc='') as pbar:

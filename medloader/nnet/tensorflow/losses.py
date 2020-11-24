@@ -1,14 +1,31 @@
+# Import external libraries
 import pdb
 import numpy as np
 import tensorflow as tf
 
-np.set_printoptions(suppress=True)
 _EPSILON = tf.keras.backend.epsilon()
 
-# label_weights = tf.constant([0.1,1,3,1,3,3,1,1,2,2], dtype=tf.float32)
-# label_weights = tf.constant([0.01, 2, 5, 1, 5, 5, 2, 2, 3, 3], dtype=tf.float32) # [0.0003, 0.07, 0.17, 0.03, 0.17, 0.17, 0.07, 0.07, 0.10, 0.10]
-# label_weights = label_weights / tf.math.reduce_sum(label_weights) # nomalized 
-label_weights      = tf.constant([0.1,1,3,1,3,3,1,1,2,2], dtype=tf.float32)
+############################################################
+#                           UTILS                          #
+############################################################
+
+_EPSILON = tf.keras.backend.epsilon()
+
+@tf.function
+def get_mask(mask_1D, Y):
+    # mask_1D: [[1,0,0,0, ...., 1]] - [B,L] something like this
+    # Y : [B,H,W,D,L] 
+    if 0:
+        mask = tf.expand_dims(tf.expand_dims(tf.expand_dims(mask_1D, axis=1),axis=1),axis=1) # mask.shape=[B,1,1,1,L]
+        mask = tf.tile(mask, multiples=[1,Y.shape[1],Y.shape[2],Y.shape[3],1]) # mask.shape = [B,H,W,D,L]
+        mask = tf.cast(mask, tf.float32)
+        return mask
+    else:
+        return mask_1D
+
+############################################################
+#                         DICE                             #
+############################################################
 
 def loss_dice_numpy(y_true, y_pred):
     """
@@ -38,13 +55,16 @@ def loss_dice_numpy(y_true, y_pred):
     return loss, loss_labels 
 
 @tf.function
-def loss_dice_3d_tf_func(y_true, y_pred, label_mask, weighted=False):
+def loss_dice_3d_tf_func_old(y_true, y_pred, label_mask, weighted=False):
     """
     :param y_true: [B, H, W, C, L]
     :param y_pred: [B, H, W, C, L] 
     - Ref: V-Net: Fully Convolutional Neural Networks for Volumetric Medical Image Segmentation
     - Ref: https://gist.github.com/jeremyjordan/9ea3032a32909f71dd2ab35fe3bacc08#file-soft_dice_loss-py
     """
+    print (' - [loss_dice_3d_tf_func()] Non-normalized weights')
+    label_weights      = tf.constant([0.1,1,3,1,3,3,1,1,2,2], dtype=tf.float32)
+
     loss_labels = []
     for label_id in range(y_pred.shape[-1]):
 
@@ -81,9 +101,9 @@ def loss_dice_3d_tf_func(y_true, y_pred, label_mask, weighted=False):
     return loss_for_train, loss_labels_for_train, loss_for_report, loss_labels_for_report 
 
 @tf.function
-def loss_dice_3d_tf_func_v3(y_true, y_pred, label_mask, weighted=False):
+def loss_dice_3d_tf_func(y_true, y_pred, label_mask, weighted=False):
     """
-    Calcultes soft-DICE loss
+    Calculates soft-DICE loss
 
     :param y_true: [B, H, W, C, L]
     :param y_pred: [B, H, W, C, L] 
@@ -91,6 +111,10 @@ def loss_dice_3d_tf_func_v3(y_true, y_pred, label_mask, weighted=False):
     - Ref: V-Net: Fully Convolutional Neural Networks for Volumetric Medical Image Segmentation
     - Ref: https://gist.github.com/jeremyjordan/9ea3032a32909f71dd2ab35fe3bacc08#file-soft_dice_loss-py
     """
+    print (' - [loss_dice_3d_tf_func()] Normalized Weights')
+    label_weights = tf.constant([0.01, 2, 5, 1, 5, 5, 2, 2, 3, 3], dtype=tf.float32) # [0.0003, 0.07, 0.17, 0.03, 0.17, 0.17, 0.07, 0.07, 0.10, 0.10]
+    label_weights = label_weights / tf.math.reduce_sum(label_weights) # nomalized
+
     loss_labels = []
     for label_id in range(y_pred.shape[-1]):
         
@@ -126,7 +150,7 @@ def loss_dice_3d_tf_func_v3(y_true, y_pred, label_mask, weighted=False):
 
     return 1.0 - loss_for_train, 1.0 - loss_labels_for_train, 1.0 - loss_for_report, 1.0 - loss_labels_for_report 
 
-# @tf.function
+@tf.function
 def loss_dice_3d_tf_func_v2(y_true, y_pred, label_mask, weighted=False):
     """
     Calcultes soft-DICE loss

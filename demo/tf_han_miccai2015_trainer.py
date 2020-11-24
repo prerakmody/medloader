@@ -11,7 +11,7 @@ PROJECT_DIR = Path(__file__).parent.absolute().parent.absolute()
 params = {
     'PROJECT_DIR': PROJECT_DIR
     , 'random_seed': 60
-    , 'exp_name': 'UNet3D_seed60'
+    , 'exp_name': 'UNet3D_NormalizedWeights_Sigmoid_seed60'
     , 'dataloader': {
         'data_dir': Path(PROJECT_DIR).joinpath('_data')
         , 'dir_type': [config.DATALOADER_MICCAI2015_TRAIN, config.DATALOADER_MICCAI2015_TRAIN_ADD]
@@ -24,7 +24,7 @@ params = {
     }
     , 'model':{
         'name': config.MODEL_UNET3D # [config.MODEL_UNET3D, config.MODEL_UNET3DSMALL, config.MODEL_UNET3DSHALLOW]
-        , 'activation': 'softmax' # ['softmax', 'sigmoid']
+        , 'activation': 'sigmoid' # ['softmax', 'sigmoid']
         , 'kernel_reg': False
         , 'optimizer': config.OPTIMIZER_ADAM
         , 'init_lr': 0.005
