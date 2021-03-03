@@ -2,6 +2,7 @@ import os
 import gc
 import pdb
 import time
+from tensorflow._api.v2 import random
 import tqdm
 import psutil
 import humanize
@@ -25,7 +26,7 @@ import medloader.nnet.tensorflow.losses as losses
 
 def get_dataloader_3D_train(data_dir, dir_type=['train']
                     , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
-                    , transforms=[], filter_grid=True
+                    , transforms=[], filter_grid=True, random_grid=True
                     , parallel_calls=None, deterministic=False
                     , patient_shuffle=True
                     , debug=False, single_sample=False):
@@ -35,7 +36,7 @@ def get_dataloader_3D_train(data_dir, dir_type=['train']
         # Step 1 - Get dataset class
         dataset = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type_
                         , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
-                        , transforms=transforms, filter_grid=filter_grid
+                        , transforms=transforms, filter_grid=filter_grid, random_grid=random_grid
                         , parallel_calls=parallel_calls, deterministic=deterministic
                         , patient_shuffle=patient_shuffle
                         , debug=debug, single_sample=single_sample)
@@ -61,7 +62,7 @@ def get_dataloader_3D_train(data_dir, dir_type=['train']
     
 def get_dataloader_3D_train_eval(data_dir, dir_type='train'
                     , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
-                    , transforms=[], filter_grid=False
+                    , transforms=[], filter_grid=False, random_grid=False
                     , parallel_calls=None, deterministic=True
                     , patient_shuffle=False
                     , debug=False, single_sample=False):
@@ -75,7 +76,7 @@ def get_dataloader_3D_train_eval(data_dir, dir_type='train'
         dir_type = 'train'
         dataset_han_miccai2015 = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type
                     , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
-                    , transforms=transforms, filter_grid=filter_grid
+                    , transforms=transforms, filter_grid=filter_grid, random_grid=random_grid
                     , parallel_calls=parallel_calls, deterministic=deterministic
                     , patient_shuffle=patient_shuffle
                     , debug=debug, single_sample=single_sample)
@@ -100,7 +101,7 @@ def get_dataloader_3D_train_eval(data_dir, dir_type='train'
 
 def get_dataloader_3D_test_eval(data_dir, dir_type='test_offsite'
                     , dimension=3, grid=True, resampled=True, mask_type=medconfig.MASK_TYPE_ONEHOT
-                    , transforms=[], filter_grid=False
+                    , transforms=[], filter_grid=False, random_grid=False
                     , parallel_calls=None, deterministic=True
                     , patient_shuffle=False
                     , debug=False, single_sample=False):
@@ -114,7 +115,7 @@ def get_dataloader_3D_test_eval(data_dir, dir_type='test_offsite'
         dir_type = 'test_offsite'
         dataset_han_miccai2015 = HaNMICCAI2015Dataset(data_dir=data_dir, dir_type=dir_type
                     , dimension=dimension, grid=grid, resampled=resampled, mask_type=mask_type
-                    , transforms=transforms, filter_grid=filter_grid
+                    , transforms=transforms, filter_grid=filter_grid, random_grid=random_grid
                     , parallel_calls=parallel_calls, deterministic=deterministic
                     , patient_shuffle=patient_shuffle
                     , debug=debug, single_sample=single_sample)
@@ -164,7 +165,7 @@ def save_model(model, params):
         traceback.print_exc()
         pdb.set_trace()
 
-def load_model(exp_name, model, epoch, params, load_type):
+def load_model(model, params, load_type):
     """
      - Ref: https://www.tensorflow.org/api_docs/python/tf/train/Checkpoint
     """
@@ -276,6 +277,8 @@ class ModelMetrics():
         for loss_key in metrics_loss:
             if config.LOSS_DICE == metrics_loss[loss_key]:
                 losses_obj[loss_key] = losses.loss_dice_3d_tf_func
+            elif config.LOSS_CE == metrics_loss[loss_key]:
+                losses_obj[loss_key] = losses.loss_ce_3d_tf_func
         
         return losses_obj
     
@@ -441,8 +444,14 @@ class ModelMetrics():
             metric_avg = []
             for label_id in self.label_ids:
                 if label_id > 0:
-                    metric_avg.append(self.metrics_loss_obj[metric_str][label_id].result().numpy())
-            loss_text = '{}Loss:{:2f}'.format(metric_str, np.mean(metric_avg))
+                    label_result = self.metrics_loss_obj[metric_str][label_id].result().numpy()
+                    if label_result > 0:
+                        metric_avg.append(label_result)
+            
+            mean_val = 0
+            if len(metric_avg):     
+                mean_val = np.mean(metric_avg)
+            loss_text = '{}Loss:{:2f}'.format(metric_str, mean_val)
             desc_str += loss_text
         
         pbar.set_description(desc=desc_str, refresh=True)

@@ -5,6 +5,7 @@ os.environ["TF_GPU_THREAD_MODE"] = "gpu_private" # to avoid large "Kernel Launch
 import tensorflow as tf
 if len(tf.config.list_physical_devices('GPU')):
     tf.config.experimental.set_memory_growth(tf.config.list_physical_devices('GPU')[0], True)
+
 ############################################################
 #                    MODEL RELATED                         #
 ############################################################
@@ -13,6 +14,7 @@ MODEL_ATTENTIONUNET3D = 'AttentionUnet3D'
 MODEL_UNET3D = 'UNet3D'
 MODEL_UNET3DSMALL = 'UNet3DSmall'
 MODEL_UNET3DSHALLOW = 'UNet3DShallow'
+MODEL_UNET3DASPP = 'UNet3DASPP'
 
 OPTIMIZER_ADAM = 'Adam'
 
@@ -33,6 +35,8 @@ LOSS_DICE = 'Dice'
 LOSS_FOCAL = 'Focal'
 LOSS_CE = 'CE'
 LOSS_NCC = 'NCC'
+LOSS_SCALAR = 'scalar'
+LOSS_VECTOR = 'vector'
 
 ############################################################
 #                    DATALOADER                            #

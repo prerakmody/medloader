@@ -72,6 +72,10 @@ class Trainer:
             print (' ---- Step Per Epochs: ', self.params['model']['profiler']['steps_per_epoch'])
         print (' - Optimizer: ', str(self.params['model']['optimizer']))
         print (' -- Init LR: ', self.params['model']['init_lr'])
+        print (' -- Grad Persistent: ', self.params['model']['grad_persistent'])
+        if self.params['model']['grad_persistent']:
+            print (' !!!!!!!!!!!!!!!!!!! GRAD PERSISTENT !!!!!!!!!!!!!!!!!!!')
+            print ('')
         print (' - Epochs: ', self.params['model']['epochs'])
         print (' -- Save: every {} epochs'.format(self.params['model']['epochs_save']))
         print (' -- Eval3D: every {} epochs '.format(self.params['model']['epochs_eval']))
@@ -82,7 +86,9 @@ class Trainer:
         print (' ------- ') 
         print (' - Eval: ', self.params['metrics']['metrics_eval'])
         print (' - Loss: ', self.params['metrics']['metrics_loss'])
+        print (' -- Type of Loss: ', self.params['metrics']['loss_type'])
         print (' -- Weighted Loss: ', self.params['metrics']['loss_weighted'])
+        print (' -- Masked Loss   : ', self.params['metrics']['loss_mask'])
         print (' -- Combo: ', self.params['metrics']['loss_combo'])
 
         print ('')
@@ -90,6 +96,7 @@ class Trainer:
         print (' ------ ')
         self.pid = os.getpid()
         print (' - OS-PID: ', self.pid)
+        print (' - Seed: ', self.params['random_seed'])
 
         print ('')
 
@@ -105,9 +112,11 @@ class Trainer:
         batch_size = self.params['dataloader']['batch_size']
         prefetch_batch = self.params['dataloader']['prefetch_batch']
         parallel_calls = self.params['dataloader']['parallel_calls']
+        random_grid = self.params['dataloader']['random_grid']
 
         # Datasets
         self.dataset_train = utils.get_dataloader_3D_train(data_dir, dir_type=dir_type
+                                , random_grid=random_grid 
                                 , resampled=resampled, single_sample=single_sample
                                 , parallel_calls=parallel_calls)
         self.dataset_train_eval = utils.get_dataloader_3D_train_eval(data_dir, resampled=resampled, single_sample=single_sample)
@@ -137,6 +146,8 @@ class Trainer:
             self.model = models.ModelUNet3DSmall(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
         elif self.params['model']['name'] == config.MODEL_ATTENTIONUNET3D:
             self.model = models.AttentionUnet3D(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
+        elif self.params['model']['name'] == config.MODEL_UNET3DASPP:
+            self.model = models.ModelUNet3DASPP(class_count=class_count, trainable=True, activation=self.params['model']['activation'])
         
         # Step 3 - Get optimizer
         if self.params['model']['optimizer'] == config.OPTIMIZER_ADAM:
@@ -183,24 +194,38 @@ class Trainer:
         trainMetrics = self.metrics[config.MODE_TRAIN]
         metrics_loss = self.params['metrics']['metrics_loss']
         loss_weighted = self.params['metrics']['loss_weighted']
+        loss_mask = self.params['metrics']['loss_mask']
+        loss_type = self.params['metrics']['loss_type']
         label_ids = self.label_ids
 
         loss_vals = tf.constant(0.0, dtype=tf.float32)
+        mask = losses.get_mask(meta1[:,-len(label_ids):], Y)
+        mask_binary = tf.cast(tf.cast(tf.math.reduce_sum(mask, axis=0), dtype=tf.bool), tf.float32)
 
         for metric_str in metrics_loss:
-            mask = losses.get_mask(meta1[:,-len(label_ids):], Y)
 
             weighted = False
             if loss_weighted[metric_str]:
                 weighted = True
+            
+            masked = False
+            if loss_mask[metric_str]:
+                masked = True        
+
             if metrics_loss[metric_str] in [config.LOSS_DICE, config.LOSS_CE, config.LOSS_FOCAL]:   
                 loss_val_train, loss_labellist_train, loss_val_report, loss_labellist_report = trainMetrics.losses_obj[metric_str](Y, y_predict, mask, weighted=weighted)
 
-                if metrics_loss[metric_str] in [config.LOSS_DICE]:
+                if metrics_loss[metric_str] in [config.LOSS_DICE, config.LOSS_CE, config.LOSS_FOCAL]:
+                    loss_labellist_report = loss_labellist_report*mask_binary
                     trainMetrics.update_metric_loss_labels(metric_str, loss_labellist_report)
                 
-                # loss_vals = tf.math.add(loss_vals, loss_val_train) # Averaged loss
-                loss_vals = tf.math.add(loss_vals, loss_labellist_train) # Averaged loss by label
+                if loss_type[metric_str] == config.LOSS_SCALAR:
+                    loss_vals = tf.math.add(loss_vals, loss_val_train) # Averaged loss
+                elif loss_type[metric_str] == config.LOSS_VECTOR:
+                    if masked:
+                        loss_labellist_train = loss_labellist_train*mask_binary
+                    loss_vals = tf.math.add(loss_vals, loss_labellist_train) # Averaged loss by label
+
 
         return loss_vals
 
@@ -211,19 +236,33 @@ class Trainer:
 
             model = self.model
             optimizer = self.optimizer
+            grad_persistent = self.params['model']['grad_persistent']
 
             # Step 1 - Calculate loss and gradients
-            with tf.GradientTape() as tape:
+            with tf.GradientTape(persistent=grad_persistent) as tape:
                 t2 = tf.timestamp()
                 y_predict = model(X, training=True)
                 t2_ = tf.timestamp()
 
                 loss_vals = self._train_loss(Y, y_predict, meta1)
 
-            # tf.print(' - loss_Vals: ', loss_vals)
             t3 = tf.timestamp()
             all_vars = model.trainable_variables
-            gradients = tape.gradient(loss_vals, all_vars) # dL/dW
+            gradients = tape.gradient(loss_vals, all_vars) # dL/dW, d(L1,L2,...,Ln)/dW
+            
+            if 0:
+                gradient_y = tape.gradient(loss_vals, y_predict)
+                gradient_y_sum = list(tf.math.reduce_sum(gradient_y, axis=[0,1,2,3]).numpy())
+                gradient_y_sum = ', '.join(['\n%.5f' % (each) if i == 5 else '%.5f' % (each) for i, each in enumerate(gradient_y_sum)])
+                tf.print(' - loss_vals: ', loss_vals)
+                tf.print(' - gradient_y: ', gradient_y.shape)
+                tf.print(' - dL/dy', gradient_y_sum) # to check for gradient sum of each label
+                last_convfilter_grad = gradients[-2]
+                # tf.math.reduce_sum(last_convfilter_grad,axis=-1) 
+                # tmp = abs(last_convfilter_grad[0,0,0,:,:]); sns.heatmap(tmp, vmin=0.0, vmax=.0005); plt.title(gradient_y_sum); plt.show()
+                # tmp = abs(last_convfilter_grad[0,0,0,:,:]); sns.heatmap(tmp); plt.title(gradient_y_sum); plt.show()
+                # pdb.set_trace()
+
             optimizer.apply_gradients(zip(gradients, all_vars))
             t3_ = tf.timestamp()
 
@@ -376,3 +415,12 @@ class Trainer:
         except:
             traceback.print_exc()
             pdb.set_trace()
+
+
+class Validate:
+
+    def __init__(self, params):
+        pass
+
+    def val():
+        pass

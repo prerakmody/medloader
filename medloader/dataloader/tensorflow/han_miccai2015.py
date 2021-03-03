@@ -1,5 +1,4 @@
 import pdb
-from sys import path
 import time
 import json
 import itertools
@@ -23,7 +22,7 @@ class HaNMICCAI2015Dataset:
 
     def __init__(self, data_dir, dir_type
                     , dimension=3, grid=True, resampled=False, mask_type=config.MASK_TYPE_ONEHOT
-                    , transforms=[], filter_grid=False
+                    , transforms=[], filter_grid=False, random_grid=False
                     , parallel_calls=None, deterministic=False
                     , patient_shuffle=False
                     , debug=False, single_sample=False):
@@ -43,6 +42,7 @@ class HaNMICCAI2015Dataset:
         # Params - Transforms/Filters
         self.transforms = transforms
         self.filter_grid = filter_grid
+        self.random_grid = random_grid
 
         # Params - Memory related
         self.patient_shuffle = patient_shuffle
@@ -181,9 +181,13 @@ class HaNMICCAI2015Dataset:
         # Step 6 - Meta for grid sampling
         if self.dimension == 3 and self.grid:
             if self.grid:
-                self.SAMPLER_PERC = getattr(config, self.name)['GRID_3D']['SAMPLER_PERC']
-                self.grid_size = getattr(config, self.name)['GRID_3D']['SIZE']
-                self.grid_overlap = getattr(config, self.name)['GRID_3D']['OVERLAP']
+                grid_3D_params = getattr(config, self.name)['GRID_3D']
+                self.grid_size = grid_3D_params['SIZE']
+                self.grid_overlap = grid_3D_params['OVERLAP']
+                self.SAMPLER_PERC = grid_3D_params['SAMPLER_PERC']
+                self.RANDOM_SHIFT_MAX = grid_3D_params['RANDOM_SHIFT_MAX']
+                self.RANDOM_SHIFT_PERC = grid_3D_params['RANDOM_SHIFT_PERC']
+
                 self.w_grid, self.h_grid, self.d_grid = self.grid_size
                 self.w_overlap, self.h_overlap, self.d_overlap = self.grid_overlap
             else:
@@ -449,6 +453,34 @@ class HaNMICCAI2015Dataset:
         # return vol_img_npy.astype(np.int16), vol_mask_npy.astype(np.uint8), (spacing*100).astype(np.int32)
 
     @tf.function
+    def _get_new_grid_idx(self, start, end, max):
+        
+        print (' - [HaNMICCAI2015Dataset][_get_new_grid_idx()] dir_type: ', self.dir_type)
+        start_prev = start
+        if tf.random.uniform([], minval=0, maxval=1, dtype=tf.dtypes.float32) <= self.RANDOM_SHIFT_PERC:
+            
+            delta_left = start
+            delta_right = max - end
+            
+            shift_voxels =  tf.random.uniform([], minval=0, maxval=self.RANDOM_SHIFT_MAX, dtype=tf.dtypes.int32)
+
+            if delta_left > self.RANDOM_SHIFT_MAX and delta_right > self.RANDOM_SHIFT_MAX:
+                if tf.random.uniform([], minval=0, maxval=1, dtype=tf.dtypes.float32) <= self.RANDOM_SHIFT_PERC:
+                    start = start - shift_voxels
+                    end = end - shift_voxels
+                else:
+                    start = start + shift_voxels
+                    end = end + shift_voxels
+            elif delta_left > self.RANDOM_SHIFT_MAX and delta_right <= self.RANDOM_SHIFT_MAX:
+                start = start - shift_voxels
+                end = end - shift_voxels
+            elif delta_left <= self.RANDOM_SHIFT_MAX and delta_right > self.RANDOM_SHIFT_MAX:
+                start = start + shift_voxels
+                end = end + shift_voxels
+
+        return start_prev, start, end
+
+    @tf.function
     def _get_data_3D(self, vol_img, vol_mask, meta1, meta2):
 
             vol_img_npy = None
@@ -464,13 +496,25 @@ class HaNMICCAI2015Dataset:
                 h_end   = h_start + self.grid_size[1]
                 d_start = meta1[3]
                 d_end   = d_start + self.grid_size[2]
-    
+
+                # Step 1.2 - Randomization of grid 
+                if self.random_grid:
+                    w_max = meta1[7]
+                    h_max = meta1[8]
+                    d_max = meta1[9]
+
+                    w_start_prev = w_start
+                    d_start_prev = d_start
+                    w_start_prev, w_start, w_end = self._get_new_grid_idx(w_start, w_end, w_max)
+                    h_start_prev, h_start, h_end = self._get_new_grid_idx(h_start, h_end, h_max)
+                    d_start_prev, d_start, d_end = self._get_new_grid_idx(d_start, d_end, d_max)
+
+                    meta1_diff = tf.convert_to_tensor([0,w_start - w_start_prev, h_start - h_start_prev, d_start - d_start_prev,0,0,0,0,0,0])
+                    meta1 = meta1 + meta1_diff
+                    
+                # Step 1.3 - Extracting grid
                 vol_img_npy = vol_img[w_start:w_end, h_start:h_end, d_start:d_end]
                 vol_mask_npy = vol_mask[w_start:w_end, h_start:h_end, d_start:d_end]
-
-                # tf.print(' --------------------------------- vol_img_npy: ', vol_img_npy.shape)
-                # tf.debugging.Assert(vol_img_npy.shape == (self.w_grid,self.h_grid,self.d_grid), [vol_img_npy])
-                # tf.debugging.Assert(vol_mask_npy.shape == (self.w_grid,self.h_grid,self.d_grid), [vol_mask_npy])
 
             # Step 2 - One-hot or not
             vol_mask_classes = []

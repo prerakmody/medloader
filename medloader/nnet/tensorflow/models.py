@@ -10,38 +10,41 @@ import medloader.nnet.config as config
 
 class ConvBlock3D(tf.keras.layers.Layer):
 
-    def __init__(self, filters, pool, kernel_size=(3,3,3), dropout=None, trainable=False, name=''):
+    def __init__(self, filters, kernel_size=(3,3,3), strides=(1, 1, 1), padding='same'
+                    , dilation_rate=(1,1,1)
+                    , activation='relu'
+                    , trainable=False
+                    , dropout=None
+                    , pool=False
+                    , name=''):
         super(ConvBlock3D, self).__init__(name='{}_ConvBlock3D'.format(name))
 
-        self.filters = filters
         self.pool = pool
-        self.kernel_size = kernel_size
-        self.dropout = dropout
-        self.trainable = trainable
-
+        
         self.conv_layer = tf.keras.Sequential()
-        for filter_id, filter_count in enumerate(self.filters):
+        for filter_id, filter_count in enumerate(filters):
             self.conv_layer.add(
-                tf.keras.layers.Conv3D(filter_count, kernel_size, padding='same'
-                        , activation='relu'
-                        , kernel_regularizer=tf.keras.regularizers.l2(0.01)
+                tf.keras.layers.Conv3D(filters=filter_count, kernel_size=kernel_size, strides=strides, padding=padding
+                        , dilation_rate=dilation_rate
+                        , activation=activation
+                        , kernel_regularizer=tf.keras.regularizers.l2(0.1)
                         , name='Conv_{}'.format(filter_id))
             )
-            self.conv_layer.add(tf.keras.layers.BatchNormalization(trainable=self.trainable))
-            if filter_id == 0 and self.dropout is not None:
-                self.conv_layer.add(tf.keras.layers.Dropout(rate=self.dropout, name=self.name + '_DropOut'))
+            self.conv_layer.add(tf.keras.layers.BatchNormalization(trainable=trainable))
+            if filter_id == 0 and dropout is not None:
+                self.conv_layer.add(tf.keras.layers.Dropout(rate=dropout, name='DropOut'))
         
-        self.pool_layer = tf.keras.layers.MaxPooling3D((2,2,2), strides=(2,2,2), trainable=self.trainable, name='Pool_{}'.format(self.name))
+        if self.pool:
+            self.pool_layer = tf.keras.layers.MaxPooling3D((2,2,2), strides=(2,2,2), name='Pool')
     
     def call(self, x):
         
         x = self.conv_layer(x)
         
-        if self.pool is False:
-            return x
+        if self.pool:
+            return x, self.pool_layer(x)
         else:
-            x_pool = self.pool_layer(x)
-            return x, x_pool
+            return x
 
 class UpConvBlock3D(tf.keras.layers.Layer):
 
@@ -371,4 +374,73 @@ class AttentionUnet3D(tf.keras.Model):
             print (' - conv10: ', conv10.shape)
                         
         return conv10
-    
+
+
+class ModelUNet3DASPP(tf.keras.Model):
+    """
+    - Ref: https://github.com/DeepMotionAIResearch/DenseASPP/blob/master/models/DenseASPP.py
+    """
+
+    def __init__(self, class_count, activation='softmax', trainable=False, verbose=False):
+        super(ModelUNet3DASPP, self).__init__(name='ModelUNet3DASPP')
+
+        self.verbose = verbose
+        
+        # dropout = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        dropout = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+        # filters  = [[16,16], [32,32]]
+        filters  = [[16,16], [64,64]]
+        dilation = [1    , 2      ,4       ,8       ,16        ]
+
+        self.convblock1 = ConvBlock3D(filters=filters[0], dilation_rate=dilation[0], trainable=trainable, dropout=dropout[0], pool=True, name='Block1') # Dim/2 (e.g. 96/2=48)
+        
+        self.convblock2 = ConvBlock3D(filters=filters[1], dilation_rate=dilation[1], trainable=trainable, dropout=dropout[1], pool=False, name='Block2_ASPP') # Dim/2 (e.g. 96/2=48)
+        self.convblock3 = ConvBlock3D(filters=filters[1], dilation_rate=dilation[2], trainable=trainable, dropout=dropout[2], pool=False, name='Block3_ASPP') # Dim/2 (e.g. 96/2=48)
+        self.convblock4 = ConvBlock3D(filters=filters[1], dilation_rate=dilation[3], trainable=trainable, dropout=dropout[3], pool=False, name='Block4_ASPP') # Dim/2 (e.g. 96/2=48)
+        self.convblock5 = ConvBlock3D(filters=filters[1], dilation_rate=dilation[4], trainable=trainable, dropout=dropout[4], pool=False, name='Block5_ASPP') # Dim/2 (e.g. 96/2=48)
+
+        self.convblock6 = ConvBlock3D(filters=filters[0], dilation_rate=1, trainable=trainable, dropout=dropout[5], pool=False, name='Block6') # Dim/2 (e.g. 96/2=48)
+        
+        self.upconvblock7 = UpConvBlock3D(filters=class_count, trainable=trainable, name='Block7_1')
+        self.convblock7 = ConvBlock3D(filters=[class_count,class_count], dilation_rate=dilation[0], trainable=trainable, dropout=dropout[6], pool=False, name='Block7_2') # Dim/2 (e.g. 96/2=48)
+
+        self.convblock8 = tf.keras.layers.Conv3D(filters=class_count, strides=(1,1,1), kernel_size=(1,1,1), padding='same'
+                                , dilation_rate=(1,1,1)
+                                , activation=activation
+                                , name='Block8')
+
+    def call(self, x):
+
+        conv1, pool1 = self.convblock1(x)
+
+        conv2 = self.convblock2(pool1)
+        conv2_op = tf.concat([pool1, conv2], axis=-1)
+
+        conv3 = self.convblock3(conv2_op)
+        conv3_op = tf.concat([conv2_op, conv3], axis=-1)
+
+        conv4 = self.convblock4(conv3_op)
+        conv4_op = tf.concat([conv3_op, conv4], axis=-1)
+
+        conv5 = self.convblock5(conv4_op)
+        conv5_op = tf.concat([conv4_op, conv5], axis=-1)
+
+        conv6 = self.convblock6(conv5_op)
+
+        up7 = self.upconvblock7(conv6)
+        conv7 = self.convblock7(tf.concat([conv1, up7], axis=-1))
+
+        conv8 = self.convblock8(conv7)
+
+        if self.verbose:
+            print (' ---------- Model: ', self.name)
+            print (' - x: ', x.shape)
+            print (' - conv2_op: ', conv2_op.shape)
+            print (' - conv3_op: ', conv3_op.shape)
+            print (' - conv4_op: ', conv4_op.shape)
+            print (' - conv5_op: ', conv5_op.shape)
+            print (' - conv6: ', conv6.shape)
+            print (' - conv7: ', conv7.shape)
+            print (' - conv8: ', conv8.shape)
+
+        return conv8

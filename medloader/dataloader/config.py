@@ -132,6 +132,8 @@ HaN_MICCAI2015 = {
         'SIZE' : [96,96,96] # [[60,60,60], [96,96,96]]   
         , 'OVERLAP' : [20,20,20] # [[10,10,10], [20,20,20]]
         , 'SAMPLER_PERC': 0.95
+        , 'RANDOM_SHIFT_MAX': 20
+        , 'RANDOM_SHIFT_PERC': 0.5
     } 
 }
 
